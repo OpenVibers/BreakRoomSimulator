@@ -142,9 +142,9 @@ function handle(p, m) {
     case 'p': { // position update [x,y,z,ry,anim]
       const [x, y, z, ry, anim] = m.d || [];
       if (![x, y, z, ry].every(Number.isFinite)) return;
-      p.x = Math.max(-78, Math.min(118, x));
+      p.x = Math.max(-78, Math.min(148, x));
       p.y = Math.max(0, Math.min(8, y));
-      p.z = Math.max(-58, Math.min(112, z));
+      p.z = Math.max(-58, Math.min(186, z));
       p.ry = ry;
       p.anim = ['idle', 'walk', 'run', 'sit', 'crouch', 'crouchwalk'].includes(anim) ? anim : 'idle';
       break;
@@ -236,13 +236,13 @@ function handle(p, m) {
     }
     case 'car': {
       const id = String(m.id || '').slice(0, 12);
-      if (!/^car\d+$/.test(id)) return;
+      if (!/^(car\d+|lambo)$/.test(id)) return;
       const c = cars[id] || (cars[id] = { x: null, z: null, ry: 0, driver: null });
       if (m.op === 'enter') {
         if (c.driver && c.driver !== p.id) return;
         c.driver = p.id;
         broadcast({ t: 'car', id, op: 'enter', driver: p.id });
-        sys(`🚗 ${p.name} got into a car`);
+        sys(id === 'lambo' ? `🏎️ ${p.name} found THE LAMBO` : `🚗 ${p.name} got into a car`);
       } else if (m.op === 'exit') {
         if (c.driver !== p.id) return;
         c.driver = null;
@@ -250,8 +250,8 @@ function handle(p, m) {
       } else if (m.op === 'state') {
         if (c.driver !== p.id) return;
         if (![m.x, m.z, m.ry].every(Number.isFinite)) return;
-        c.x = Math.max(-78, Math.min(120, m.x));
-        c.z = Math.max(-58, Math.min(112, m.z));
+        c.x = Math.max(-78, Math.min(148, m.x));
+        c.z = Math.max(-58, Math.min(186, m.z));
         c.ry = m.ry;
         broadcast({ t: 'car', id, op: 'state', x: c.x, z: c.z, ry: c.ry, driver: p.id }, p.id);
       }

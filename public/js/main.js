@@ -84,6 +84,18 @@ function start(token, user) {
   // ---------- drivable cars (arcade vehicle physics) ----------
   const carState = { driving: null, speed: 0 }; // driving = W.cars entry
   let carSendT = 0;
+  // keep a car's visuals, heading-aware collider and E-interact spot in sync
+  // with wherever it actually is (they used to stay at the parking spot)
+  function syncCar(car) {
+    car.group.position.set(car.x, 0, car.z);
+    car.group.rotation.y = car.ry;
+    const s = Math.abs(Math.sin(car.ry)), c = Math.abs(Math.cos(car.ry));
+    const hl = car.hl || 2.15, hw = car.hw || 1.0;
+    const ex = hl * s + hw * c, ez = hl * c + hw * s;
+    car.col.x0 = car.x - ex; car.col.x1 = car.x + ex;
+    car.col.z0 = car.z - ez; car.col.z1 = car.z + ez;
+    if (car.inter) { car.inter.x = car.x; car.inter.z = car.z; }
+  }
   function enterCar(car) {
     if (car.driver && car.driver !== myId) { toast('🚗 Someone is already driving that one.'); return; }
     carState.driving = car;
@@ -103,6 +115,7 @@ function start(token, user) {
     my.x = car.x + Math.cos(car.ry) * 1.6;
     my.z = car.z - Math.sin(car.ry) * 1.6;
     my.vel.x = 0; my.vel.z = 0;
+    syncCar(car);
     net.send({ t: 'car', id: car.id, op: 'exit' });
     sendPos(true);
   }
@@ -115,6 +128,8 @@ function start(token, user) {
     } else if (m.op === 'exit') {
       car.driver = null;
       car.col.off = false;
+      if (Number.isFinite(m.x)) { car.x = m.x; car.z = m.z; car.ry = m.ry; }
+      syncCar(car);
       if (Number.isFinite(m.x)) { car.x = m.x; car.z = m.z; car.ry = m.ry; }
     } else if (m.op === 'state' && m.driver !== myId) {
       car.driver = m.driver;
@@ -368,7 +383,7 @@ function start(token, user) {
     for (const [cid, c] of Object.entries(m.cars || {})) {
       const car = W.cars?.find(k => k.id === cid);
       if (!car) continue;
-      if (Number.isFinite(c.x)) { car.x = c.x; car.z = c.z; car.ry = c.ry; car.group.position.set(c.x, 0, c.z); car.group.rotation.y = c.ry; car.col.x0 = c.x - 2.1; car.col.x1 = c.x + 2.1; car.col.z0 = c.z - 1; car.col.z1 = c.z + 1; }
+      if (Number.isFinite(c.x)) { car.x = c.x; car.z = c.z; car.ry = c.ry; syncCar(car); }
       car.driver = c.driver;
       if (c.driver) car.col.off = true;
     }
@@ -600,6 +615,10 @@ function start(token, user) {
         case 'smoke':
           toast('🚬 You take a moment in the smoke cage. The parking lot hums.', 3200);
           return;
+        case 'home':
+          toast('🏠 You made it home! Shift over, feet up. See you at PAE2 tomorrow.', 4600);
+          beep(720, .12, 'sine', .1);
+          return;
       }
     }
     if (nearestSeat) sitDown(nearestSeat);
@@ -679,8 +698,8 @@ function start(token, user) {
       const throttle = -kv.y;                       // W forward, S reverse/brake
       const steer = -kv.x;
       const handbrake = input.keys.Space;
-      const maxF = 17, maxR = 6;
-      if (throttle > 0) carState.speed += 9 * throttle * dt;
+      const maxF = car.top || 17, maxR = 6;
+      if (throttle > 0) carState.speed += (car.acc || 9) * throttle * dt;
       else if (throttle < 0) carState.speed += (carState.speed > 0 ? 14 : 5) * throttle * dt;
       carState.speed -= carState.speed * (handbrake ? 2.4 : .5) * dt; // drag
       carState.speed = Math.max(-maxR, Math.min(maxF, carState.speed));
@@ -696,9 +715,7 @@ function start(token, user) {
         carState.speed *= .35;
       }
       car.x = rx; car.z = rz;
-      car.group.position.set(car.x, 0, car.z);
-      car.group.rotation.y = car.ry;
-      car.col.x0 = car.x - 2.1; car.col.x1 = car.x + 2.1; car.col.z0 = car.z - 1; car.col.z1 = car.z + 1;
+      syncCar(car);
       // player rides in the seat; engine hum
       my.x = car.x; my.z = car.z; my.y = .45; my.ry = car.ry;
       my.anim = 'sit';
@@ -758,8 +775,9 @@ function start(token, user) {
       }
       // walked away from pong table?
       if (mg.myPongTable) {
+        // anchors from the rotated cafeteria group carry world coords in wx/wz
         const a = W.anchors[`pong-${mg.myPongTable}`];
-        if (a && Math.hypot(my.x - a.x, my.z - a.z) > 4.5) net.send({ t: 'pong', id: mg.myPongTable, op: 'leave' });
+        if (a && Math.hypot(my.x - (a.wx ?? a.x), my.z - (a.wz ?? a.z)) > 4.5) net.send({ t: 'pong', id: mg.myPongTable, op: 'leave' });
       }
     }
 
@@ -843,9 +861,7 @@ function start(token, user) {
         car.z += (car.tz - car.z) * Math.min(1, dt * 10);
         let cdr = (car.try - car.ry + Math.PI * 3) % (Math.PI * 2) - Math.PI;
         car.ry += cdr * Math.min(1, dt * 10);
-        car.group.position.set(car.x, 0, car.z);
-        car.group.rotation.y = car.ry;
-        car.col.x0 = car.x - 2.1; car.col.x1 = car.x + 2.1; car.col.z0 = car.z - 1; car.col.z1 = car.z + 1;
+        syncCar(car);
       }
     }
 

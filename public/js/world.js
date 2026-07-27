@@ -1294,8 +1294,9 @@ function exterior(scene) {
   scene.add(box(60, 9, 16, new THREE.MeshStandardMaterial({ color: 0xb7bdc4, roughness: .9 }), -95, 4.5, -30));
   scene.add(box(60, 2.5, 16.2, new THREE.MeshStandardMaterial({ color: 0x2b4a6b, roughness: .8 }), -95, 1.25, -30));
   // outer bounds (annex extends the footprint east to x≈53)
-  W.colliders.push({ x0: -78, x1: -76, z0: -60, z1: 114 }, { x0: 122, x1: 124, z0: -60, z1: 114 },
-    { x0: -78, x1: 124, z0: -60, z1: -58 }, { x0: -78, x1: 124, z0: 112, z1: 114 });
+  // world bounds expanded for the street grid + neighborhood (Overhead layout)
+  W.colliders.push({ x0: -78, x1: -76, z0: -60, z1: 188 }, { x0: 148, x1: 150, z0: -60, z1: 188 },
+    { x0: -78, x1: 150, z0: -60, z1: -58 }, { x0: -78, x1: 150, z0: 186, z1: 188 });
 }
 
 // ============================================================ LOUNGE
@@ -2396,8 +2397,9 @@ function exteriorEast(scene) {
     const col = { x0: g.position.x - 2.1, x1: g.position.x + 2.1, z0: g.position.z - 1, z1: g.position.z + 1, off: false };
     W.colliders.push(col);
     const id = 'car' + i;
-    W.cars.push({ id, group: g, col, driver: null, x: g.position.x, z: g.position.z, ry: Math.PI / 2 });
-    inter({ id, type: 'car', x: g.position.x, z: g.position.z, r: 3.4, label: 'Drive the car 🚗', data: { car: id } });
+    const it = { id, type: 'car', x: g.position.x, z: g.position.z, r: 3.4, label: 'Drive the car 🚗', data: { car: id } };
+    inter(it);
+    W.cars.push({ id, group: g, col, inter: it, driver: null, x: g.position.x, z: g.position.z, ry: Math.PI / 2 });
   }
   // flag pole + hydrant + food truck (from trips)
   const pole = cyl(.05, .07, 9, M.chrome, 94.5, 4.5, -10, 8);
@@ -2564,10 +2566,160 @@ function pickups(scene) {
   inter({ id: 'pk-paddle', type: 'pickup', x: 64.5, z: 94, r: 1.3, label: 'Take a spare paddle 🏓', data: { item: 'paddle' } });
 }
 
+// ============================================================ STREETS & HOME
+// Overhead layout: 172nd St NE runs past the front parking lot, 51st Ave NE
+// crosses it, and Longhouse Trail Ln is the little residential lane — so you
+// can badge out, get in a car, and actually drive home.
+function streets(scene) {
+  const asph = new THREE.MeshStandardMaterial({ map: TX.asphaltTexture(), roughness: .95 });
+  const mk = (w, d, x, z, y = -.028) => {
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(w, d), asph);
+    p.rotation.x = -Math.PI / 2; p.position.set(x, y, z);
+    scene.add(p); return p;
+  };
+  // grass base under the whole expansion
+  const grass = new THREE.Mesh(new THREE.PlaneGeometry(232, 252), new THREE.MeshStandardMaterial({ color: 0x74855f, roughness: .95 }));
+  grass.rotation.x = -Math.PI / 2; grass.position.set(36, -.045, 64);
+  scene.add(grass);
+  mk(12, 244, 138, 64);           // 172nd St NE (game: north-south at x 138)
+  mk(190, 12, 43, 138, -.026);    // 51st Ave NE (game: east-west at z 138)
+  mk(16, 9, 126, 0);              // lot exit north
+  mk(16, 9, 126, 70);             // lot exit south
+  mk(8, 30, 30, 152, -.024);      // Longhouse Trail Ln
+  const cul = new THREE.Mesh(new THREE.CircleGeometry(9, 22), asph);
+  cul.rotation.x = -Math.PI / 2; cul.position.set(30, -.024, 170);
+  scene.add(cul);
+  // lane markings
+  const dashM = new THREE.MeshBasicMaterial({ color: 0xe8e6da });
+  const dash = (w, d, x, z) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), dashM); m.rotation.x = -Math.PI / 2; m.position.set(x, -.018, z); scene.add(m); };
+  for (let z = -50; z <= 178; z += 7) if (z < 130 || z > 146) dash(.22, 2.6, 138, z);
+  for (let x = -44; x <= 128; x += 7) dash(2.6, .22, x, 138);
+  const edgeM = new THREE.MeshBasicMaterial({ color: 0xd8d8d2 });
+  for (const ex of [132.6, 143.4]) { const m = new THREE.Mesh(new THREE.PlaneGeometry(.16, 244), edgeM); m.rotation.x = -Math.PI / 2; m.position.set(ex, -.018, 64); scene.add(m); }
+  // street signs at the corner + a stop sign at the lot exit
+  const bladeTex = (t) => TX.ct(256, 48, (g, w, h) => {
+    g.fillStyle = '#0f6b38'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = '#fff'; g.lineWidth = 3; g.strokeRect(2, 2, w - 4, h - 4);
+    g.fillStyle = '#fff'; g.font = '700 26px Arial'; g.textAlign = 'center'; g.fillText(t, w / 2, 33);
+  });
+  const signPost = (x, z) => { scene.add(cyl(.04, .05, 3, M.chrome, x, 1.5, z, 8)); };
+  signPost(131.4, 131.2);
+  for (const [t, y, ry] of [['172nd St NE', 2.8, 0], ['51st Ave NE', 2.45, Math.PI / 2]]) {
+    const b = new THREE.Mesh(new THREE.PlaneGeometry(1.7, .32), new THREE.MeshBasicMaterial({ map: bladeTex(t), side: THREE.DoubleSide }));
+    b.position.set(131.4, y, 131.2); b.rotation.y = ry;
+    scene.add(b);
+  }
+  const stopTex = TX.ct(128, 128, (g, w, h) => {
+    g.fillStyle = '#c22127'; g.beginPath();
+    for (let i = 0; i < 8; i++) { const a = Math.PI / 8 + i * Math.PI / 4; const px = w / 2 + Math.cos(a) * 58, py = h / 2 + Math.sin(a) * 58; i ? g.lineTo(px, py) : g.moveTo(px, py); }
+    g.closePath(); g.fill();
+    g.fillStyle = '#fff'; g.font = '900 40px Arial'; g.textAlign = 'center'; g.fillText('STOP', w / 2, h / 2 + 14);
+  });
+  for (const [sx, sz] of [[130.5, 5.5], [130.5, 75.5]]) {
+    scene.add(cyl(.04, .05, 2.6, M.chrome, sx, 1.3, sz, 8));
+    const s = new THREE.Mesh(new THREE.PlaneGeometry(.7, .7), new THREE.MeshBasicMaterial({ map: stopTex, transparent: true, side: THREE.DoubleSide }));
+    s.position.set(sx, 2.3, sz); s.rotation.y = Math.PI / 2;
+    scene.add(s);
+  }
+  // street lights along 172nd
+  const lampM = new THREE.MeshStandardMaterial({ color: 0xfff3c9, emissive: 0xfff3c9, emissiveIntensity: .9 });
+  for (const lz of [-30, 10, 50, 90, 126]) {
+    scene.add(cyl(.07, .09, 6.4, M.blackMetal, 132.2, 3.2, lz, 8));
+    scene.add(box(1.6, .08, .12, M.blackMetal, 133, 6.35, lz));
+    scene.add(box(.5, .1, .22, lampM, 133.7, 6.28, lz));
+    collide(132.2, lz, .3, .3);
+  }
+  // ---- Longhouse Trail houses ----
+  const house = (hx, hz, ry, cBody, cRoof, isHome) => {
+    const h = new THREE.Group();
+    h.add(box(5, 2.7, 4.2, new THREE.MeshStandardMaterial({ color: cBody, roughness: .85 }), 0, 1.35, 0));
+    const roofM = new THREE.MeshStandardMaterial({ color: cRoof, roughness: .9 });
+    const r1 = box(5.6, .14, 2.65, roofM, 0, 3.28, -1.05); r1.rotation.x = .42;
+    const r2 = box(5.6, .14, 2.65, roofM, 0, 3.28, 1.05); r2.rotation.x = -.42;
+    h.add(r1, r2);
+    h.add(box(.9, 1.9, .08, new THREE.MeshStandardMaterial({ color: 0x4a3626, roughness: .8 }), -1.1, .95, 2.12)); // door
+    for (const wx of [.7, 1.7]) h.add(box(.9, .8, .06, new THREE.MeshStandardMaterial({ color: 0xbfd6e4, roughness: .25, metalness: .3 }), wx, 1.5, 2.12));
+    if (isHome) {
+      h.add(box(.22, .14, .14, new THREE.MeshStandardMaterial({ color: 0xffd34d, emissive: 0xffb52e, emissiveIntensity: .9 }), -1.75, 2.15, 2.14)); // porch light
+      const mat = new THREE.Mesh(new THREE.PlaneGeometry(1, .6), new THREE.MeshBasicMaterial({ map: TX.ct(96, 64, (g, w, hh) => { g.fillStyle = '#7a4b2a'; g.fillRect(0, 0, w, hh); g.fillStyle = '#fff'; g.font = '700 15px "Segoe UI"'; g.textAlign = 'center'; g.fillText('WELCOME', w / 2, 38); }) }));
+      mat.rotation.x = -Math.PI / 2; mat.position.set(-1.1, .02, 2.75); h.add(mat);
+    }
+    h.position.set(hx, 0, hz); h.rotation.y = ry;
+    scene.add(h);
+    collide(hx, hz, 5.4, 4.6);
+  };
+  const bodies = [0xcfc6b4, 0x9fb2c0, 0xb8a390, 0x8f9d8a, 0xc9b9a1];
+  for (let i = 0; i < 3; i++) {
+    house(21.5, 148 + i * 9, Math.PI / 2, bodies[i], 0x4d4a45, false);
+    house(38.5, 150 + i * 9, -Math.PI / 2, bodies[i + 2 > 4 ? 0 : i + 2], 0x5a544c, false);
+    mk(3.5, 2.6, 25.4, 148 + i * 9, -.022); mk(3.5, 2.6, 34.6, 150 + i * 9, -.022);
+  }
+  // your house, at the end of the cul-de-sac
+  house(30, 176.5, Math.PI, 0xdccfae, 0x6b3f34, true);
+  mk(3, 4.2, 30, 172.6, -.022);
+  const mbPost = cyl(.04, .04, 1.1, M.woodDark, 27.4, .55, 172.2, 6);
+  scene.add(mbPost);
+  scene.add(box(.5, .3, .32, new THREE.MeshStandardMaterial({ color: 0x2e4d8a, roughness: .5 }), 27.4, 1.2, 172.2));
+  inter({ id: 'home', type: 'home', x: 30, z: 174.2, r: 2.4, label: 'You made it — go relax 🏠' });
+  // a few yard trees
+  for (const [tx, tz] of [[14, 146], [46, 158], [14, 168], [44, 174], [120, 150]]) {
+    scene.add(cyl(.09, .12, 1.7, M.woodDark, tx, .85, tz, 8));
+    const fol = new THREE.Mesh(new THREE.SphereGeometry(1.25, 10, 8), new THREE.MeshStandardMaterial({ color: 0x4c7a3d, roughness: .9 }));
+    fol.position.set(tx, 2.6, tz); fol.scale.y = 1.25;
+    scene.add(fol);
+    collide(tx, tz, .4, .4);
+  }
+
+  // ---- the secret: a rusty container behind the smoke cage, something golden inside ----
+  const rustM = new THREE.MeshStandardMaterial({ color: 0x8a4a2e, roughness: .8, metalness: .3 });
+  scene.add(blocker(box(.16, 2.7, 8, rustM, 39.2, 1.35, 96)));   // west wall
+  scene.add(blocker(box(.16, 2.7, 8, rustM, 43.2, 1.35, 96)));   // east wall
+  scene.add(blocker(box(4.2, 2.7, .16, rustM, 41.2, 1.35, 92)));  // closed north end
+  scene.add(blocker(box(4.2, .14, 8.2, rustM, 41.2, 2.75, 96)));  // roof
+  collide(39.2, 96, .3, 8); collide(43.2, 96, .3, 8); collide(41.2, 92, 4.2, .3);
+  // the Lamborghini
+  const lam = new THREE.Group();
+  const lamB = new THREE.MeshStandardMaterial({ color: 0xf7c500, roughness: .2, metalness: .75 });
+  const lamG = new THREE.MeshStandardMaterial({ color: 0x14171c, roughness: .15, metalness: .4 });
+  lam.add(box(1.9, .36, 4.35, lamB, 0, .4, 0));                   // low floorpan
+  const nose = box(1.78, .22, 1.5, lamB, 0, .56, 1.5); nose.rotation.x = .09; lam.add(nose);
+  const shield = box(1.6, .1, 1.05, lamG, 0, .82, .62); shield.rotation.x = .42; lam.add(shield);
+  lam.add(box(1.66, .3, 1.15, lamG, 0, .78, -.25));               // cabin
+  const engineDeck = box(1.8, .2, 1.35, lamB, 0, .68, -1.45); engineDeck.rotation.x = -.06; lam.add(engineDeck);
+  lam.add(box(1.94, .07, .42, lamG, 0, 1.02, -2.0));              // spoiler
+  for (const s of [-1, 1]) {
+    lam.add(box(.09, .3, .09, lamG, s * .75, .85, -2.0));
+    lam.add(box(.34, .07, .1, new THREE.MeshStandardMaterial({ color: 0xfff8d8, emissive: 0xfff8d8, emissiveIntensity: .6 }), s * .62, .52, 2.2));
+    lam.add(box(.4, .1, .08, new THREE.MeshStandardMaterial({ color: 0xd93025, emissive: 0xa01812, emissiveIntensity: .7 }), s * .55, .62, -2.16));
+    lam.add(box(.5, .04, .5, lamG, s * .6, .59, -1.4));           // engine vents
+  }
+  for (const [wx, wz] of [[-.88, 1.4], [.88, 1.4], [-.88, -1.35], [.88, -1.35]]) {
+    const wh = cyl(.34, .34, .3, M.blackMetal, wx, .34, wz); wh.rotation.z = Math.PI / 2; lam.add(wh);
+  }
+  lam.position.set(41.2, 0, 97.2); // ry 0 = nose toward the open (south) end
+  scene.add(lam);
+  const lamCol = { x0: 41.2 - 1.05, x1: 41.2 + 1.05, z0: 97.2 - 2.15, z1: 97.2 + 2.15, off: false };
+  W.colliders.push(lamCol);
+  const lamIt = { id: 'lambo', type: 'car', x: 41.2, z: 97.2, r: 3.9, label: 'Wait… is that a LAMBORGHINI?! 🏎️', data: { car: 'lambo' } };
+  inter(lamIt);
+  W.cars.push({ id: 'lambo', group: lam, col: lamCol, inter: lamIt, driver: null, x: 41.2, z: 97.2, ry: 0, top: 30, acc: 19, hl: 2.2, hw: 1.05 });
+  // the only hint, scribbled inside the smoke cage
+  const hintTex = TX.ct(192, 96, (g, w, h) => {
+    g.fillStyle = '#e8e2d2'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#3a3a3a'; g.font = 'italic 600 15px "Segoe UI"'; g.textAlign = 'center';
+    g.fillText('night shift only:', w / 2, 34);
+    g.fillText('the good car is', w / 2, 54);
+    g.fillText('behind the cage 🔑', w / 2, 74);
+  });
+  const hint = new THREE.Mesh(new THREE.PlaneGeometry(.8, .4), new THREE.MeshBasicMaterial({ map: hintTex, side: THREE.DoubleSide }));
+  hint.rotation.y = Math.PI / 2; hint.position.set(45.85, 1.35, 95);
+  scene.add(hint);
+}
+
 export function buildWorld(scene) {
   mats();
   scene.background = new THREE.Color(0xbcd2e2);
-  scene.fog = new THREE.Fog(0xbcd2e2, 70, 160);
+  scene.fog = new THREE.Fog(0xbcd2e2, 90, 260); // far enough to see down the streets
   lights(scene);
   // ---- cafeteria block: built in its legacy local frame, then rotated 90 deg and
   // moved SOUTH of the security block per the site plan — the old east door
@@ -2578,6 +2730,7 @@ export function buildWorld(scene) {
   caf.position.set(75, 0, 69);
   scene.add(caf);
   const mark = { col: W.colliders.length, seat: W.seats.length, inter: W.interactables.length };
+  const preAnchors = new Set(Object.keys(W.anchors));
   shell(caf);
   lounge(caf);
   gamesCorner(caf);
@@ -2602,11 +2755,20 @@ export function buildWorld(scene) {
     const it = W.interactables[i];
     [it.x, it.z] = rot(it.x, it.z);
   }
+  // anchors registered inside the group keep local x/z (their meshes are group
+  // children) but also get world wx/wz for player-distance checks (pong quit
+  // used local coords → distance was always huge → leave-spam broke minigames)
+  for (const k of Object.keys(W.anchors)) {
+    if (preAnchors.has(k)) continue;
+    const a = W.anchors[k];
+    if (a && typeof a.x === 'number' && typeof a.z === 'number') [a.wx, a.wz] = rot(a.x, a.z);
+  }
   lockerHall(scene);
   securityLobby(scene);
   exterior(scene);
   exteriorEast(scene);
   exteriorSouth(scene);
+  streets(scene);
   floorPaths(scene);
   pickups(scene);
   return W;
