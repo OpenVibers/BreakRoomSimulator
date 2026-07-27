@@ -8,11 +8,35 @@ export const input = {
   isTouch: false,
   locked: false,
   chatOpen: false,
+  uiOpen: false,                 // any UI panel (inventory/settings/editor) open
   onAction: null,                // set by main
   onTap: null,                   // world tap (for board clicks on mobile)
 };
 
+// ---------- UI focus manager ----------
+// Any open panel releases the pointer so the cursor can click UI; closing the
+// last panel re-locks mouse-look if the player had it before (works from
+// keydown/click handlers, which carry the user gesture relock needs).
+let lockEl = null;
+const uiStack = new Set();
+let relock = false;
+export function uiFocus(id, open) {
+  const had = uiStack.size > 0;
+  open ? uiStack.add(id) : uiStack.delete(id);
+  input.uiOpen = uiStack.size > 0;
+  if (input.uiOpen && !had) {
+    relock = input.locked;
+    document.exitPointerLock?.();
+  } else if (!input.uiOpen && had) {
+    if (relock && !input.isTouch) {
+      try { lockEl?.requestPointerLock?.()?.catch?.(() => {}); } catch {}
+    }
+    relock = false;
+  }
+}
+
 export function initInput(canvas) {
+  lockEl = canvas;
   input.isTouch = navigator.maxTouchPoints > 0 || 'ontouchstart' in window
     || matchMedia('(any-pointer: coarse)').matches;
   if (input.isTouch) document.body.classList.add('touch');
@@ -34,7 +58,7 @@ export function initInput(canvas) {
 
   // ---------- mouse (also active on hybrid touch devices) ----------
   canvas.addEventListener('click', (e) => {
-    if (Date.now() - (input.lastTouch || 0) < 600 || input.chatOpen) return;
+    if (Date.now() - (input.lastTouch || 0) < 600 || input.chatOpen || input.uiOpen) return;
     if (!input.locked) canvas.requestPointerLock?.();
     else if (input.onTap) input.onTap(innerWidth / 2, innerHeight / 2); // crosshair click
   });

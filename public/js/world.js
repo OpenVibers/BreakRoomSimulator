@@ -130,6 +130,9 @@ function shell(scene) {
   collide(-21.65, -17.1, 16.7, .6); collide(-10.85, -17.1, 1.7, .6);
   collide(1, -17.1, 22, .6); collide(27.5, -17.1, 21, .6);
   serviceHallway(scene);
+  // full-height backing panel in the exit-door bay — the gap above/around the
+  // 2.4 m door slab looked straight through into the lit hallway (Bug30)
+  scene.add(blocker(box(1.8, 6.2, .14, M.wallDark, -12.5, 3.1, -17.02)));
   exitDoor(scene, -12.6, -16.85, 0);
   // south (z=17): long glass run with parking outside (photos 1/2/4) and a second
   // set of entry doors near the market end (panorama), wall far east
@@ -1212,6 +1215,7 @@ function entrance(scene) {
   scene.add(box(.3, 6.2, 1.2, M.wall, -38, 3.1, -2.6));
   scene.add(box(.3, 6.2, 1.2, M.wall, -38, 3.1, 2.6));
   scene.add(box(.3, 1.6, 6, M.wall, -38, 5.4, 0));
+  scene.add(box(.07, 1.9, 4.1, M.glass, -37.9, 3.72, 0)); // transom over the leaves
   const signM = new THREE.MeshBasicMaterial({ map: emergencySignTexture() });
   for (const s of [-1, 1]) {
     const leaf = box(.07, 2.6, 1.9, M.glass, -37.9, 1.5, s * 1.0);

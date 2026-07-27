@@ -2,6 +2,7 @@
 // All changes go through the server (admin-validated) and broadcast live.
 import * as THREE from 'three';
 import { net } from './net.js';
+import { uiFocus } from './input.js';
 import { PROP_KINDS } from './props.js';
 
 export function initEditor({ scene, camera, props, toast }) {
@@ -56,7 +57,7 @@ export function initEditor({ scene, camera, props, toast }) {
     ed.active = on;
     panel.classList.toggle('hidden', !on);
     btn.style.background = on ? '#ff9900' : '';
-    document.exitPointerLock?.();
+    uiFocus('editor', on);
     if (!on) { stopPlacing(); select(null); }
     toast(on ? '🛠️ Editor on — changes save to the server for everyone' : 'Editor off', 1800);
   }

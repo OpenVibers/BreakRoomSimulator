@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { buildWorld, resolveCollisions, W } from './world.js';
 import { makeAvatar, buildHeldMesh, SKINS, SHIRTS, HAIRS, HATS } from './avatar.js';
 import { initInventory, ITEMS } from './inventory.js';
-import { input, initInput, keyMove } from './input.js';
+import { input, initInput, keyMove, uiFocus } from './input.js';
 import { net, api, connect } from './net.js';
 import { initMinigames, beep } from './minigames.js';
 import { initProps } from './props.js';
@@ -352,6 +352,11 @@ function start(token, user) {
   addEventListener('keydown', (e) => {
     if (e.code === 'Enter' && !input.chatOpen && !mg.inArcade() && started) { openChat(); e.preventDefault(); }
     else if (e.code === 'Escape' && input.chatOpen) closeChat();
+    else if (e.code === 'Escape' && started) {
+      // Escape closes the top UI panel (inventory/settings) like any game menu
+      if (invApi.state.open) invApi.toggle(false);
+      else if (!$('settings').classList.contains('hidden')) { $('settings').classList.add('hidden'); uiFocus('settings', false); }
+    }
   });
   $('btn-chat').addEventListener('touchstart', (e) => { e.preventDefault(); input.chatOpen ? closeChat() : openChat(); }, { passive: false });
 
@@ -474,6 +479,7 @@ function start(token, user) {
   }
   $('btn-settings').onclick = () => {
     $('settings').classList.remove('hidden');
+    uiFocus('settings', true);
     buildApRows();
     document.querySelectorAll('.vest').forEach(b => b.classList.toggle('sel', b.dataset.vest === me.vest));
     const s = me.stats;
@@ -495,7 +501,7 @@ function start(token, user) {
   $('set-inverty').onchange = (e) => { cfg.invertY = e.target.checked; saveCfg(); };
   camera.fov = cfg.fov; camera.updateProjectionMatrix();
   refreshCfgUI();
-  $('btn-close-settings').onclick = () => $('settings').classList.add('hidden');
+  $('btn-close-settings').onclick = () => { $('settings').classList.add('hidden'); uiFocus('settings', false); };
   $('btn-logout').onclick = () => { localStorage.clear(); location.reload(); };
   document.querySelectorAll('.vest').forEach(b => b.onclick = () => {
     me.vest = b.dataset.vest;
@@ -868,6 +874,7 @@ function start(token, user) {
   };
 
   addEventListener('wheel', (e) => {
+    if (input.uiOpen) return; // scrolling a panel shouldn't zoom/cycle
     if (fp) {
       if (cfg.wheel === 'hotbar') { // cycle hotbar
         const s = invApi.state;

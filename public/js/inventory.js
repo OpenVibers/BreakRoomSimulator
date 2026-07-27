@@ -2,6 +2,7 @@
 // number keys to select, consumables / melee props / clothes. Persists via server.
 import { net } from './net.js';
 import { beep } from './minigames.js';
+import { uiFocus } from './input.js';
 
 export const ITEMS = {
   chips:   { name: 'Chips',        icon: '🍟', type: 'food' },
@@ -172,6 +173,7 @@ export function initInventory({ me, onEquip, onWear, toast }) {
   function toggle(open) {
     inv.open = open ?? !inv.open;
     invEl.classList.toggle('hidden', !inv.open);
+    uiFocus('inv', inv.open); // free the cursor while the panel is up
     if (inv.open) renderInv();
     return inv.open;
   }
