@@ -15,7 +15,13 @@ const HOST = process.env.HOST || '0.0.0.0';
 const app = express();
 app.set('trust proxy', true); // behind Caddy/nginx on simulator.rest
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '..', 'public'), { maxAge: '1h', setHeaders: (res, p) => { if (/\.(html|js|css)$/.test(p)) res.setHeader('Cache-Control', 'no-cache'); } }));
+// Game code must be no-store: Cloudflare bypasses no-store entirely, whereas
+// no-cache gets rewritten by its Browser Cache TTL (players kept stale js for
+// hours after deploys). Vendor libs never change → long cache; images 1h.
+app.use(express.static(path.join(__dirname, '..', 'public'), { maxAge: '1h', setHeaders: (res, p) => {
+  if (p.includes(`${path.sep}vendor${path.sep}`)) res.setHeader('Cache-Control', 'public, max-age=86400');
+  else if (/\.(html|js|css)$/.test(p)) res.setHeader('Cache-Control', 'no-store, must-revalidate');
+} }));
 app.get('/play', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'play.html')));
 
 app.post('/api/register', (req, res) => res.json(store.register(req.body.name, req.body.pass)));
