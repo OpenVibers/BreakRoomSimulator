@@ -161,7 +161,7 @@ function shell(scene) {
     leaf.add(box(.09, .5, .5, new THREE.MeshStandardMaterial({ color: 0x9aa4ae, roughness: .3, metalness: .5 }), 0, -.7, 0)); // kick plate
     const lg = new THREE.Group();
     lg.add(leaf);
-    leaf.position.set(0, 0, .75);
+    leaf.position.set(0, 1.15, .75); // stand on the floor (0 sank it halfway in)
     lg.position.set(38.2, 0, dz); lg.rotation.y = ry;
     scene.add(lg);
   }
@@ -352,7 +352,7 @@ function lockerHall(scene) {
   rack.position.set(90.9, 0, 29.2);
   scene.add(rack);
   collide(90.9, 29.2, .9, .5);
-  scene.add(cyl(.22, .18, .5, new THREE.MeshStandardMaterial({ color: 0xf2c521, roughness: .6 }), 73.4, .25, 23.2, 10));
+  scene.add(cyl(.22, .18, .5, new THREE.MeshStandardMaterial({ color: 0xf2c521, roughness: .6 }), 58.85, .25, 21.4, 10)); // mop bucket by the west wall, not mid-walkway
   trash(scene, 58.9, 18.2, 0x6a6e73);
   // yellow/green hazard square by the assessment spot
   const hz2 = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.2), new THREE.MeshBasicMaterial({ map: TX.hazardSquareTexture(), transparent: true }));
@@ -548,6 +548,11 @@ function securityLobby(scene) {
   scene.add(blocker(box(7, 2.5, .3, blueWall, 76.5, 1.25, 17)));   // 73..80 (opening 68..73)
   scene.add(blocker(box(12, 2.5, .3, blueWall, 86, 1.25, 17)));    // 80..92
   collide(65, 17, 6, .6); collide(76.5, 17, 7, .6); collide(86, 17, 12, .6);
+  // dress the locker opening: chrome corner guards on the jambs + a blue
+  // accent lintel band, so the doorway reads finished from both sides
+  scene.add(box(.14, 2.5, .36, M.chrome, 68.05, 1.25, 17));
+  scene.add(box(.14, 2.5, .36, M.chrome, 72.95, 1.25, 17));
+  scene.add(box(5.3, .3, .36, M.blueSoffit, 70.5, 2.62, 17));
   // mountain mural faces on the security side of the wall, either side of the opening
   for (const [mx, mw] of [[65, 5.8], [76.5, 6.8]]) {
     const mp2 = new THREE.Mesh(new THREE.PlaneGeometry(mw, 2.45), muralMat);
@@ -759,7 +764,7 @@ function securityLobby(scene) {
     foot.position.set(s * .24, .07, .12);
     peccy.add(foot);
   }
-  const plinth = cyl(.75, .85, .16, new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: .5 }), 0, .08, 0, 20);
+  const plinth = cyl(.75, .85, .16, new THREE.MeshStandardMaterial({ color: 0x232f3e, roughness: .6 }), 0, .08, 0, 20); // dark so Peccy reads grounded from afar
   peccy.add(plinth);
   peccy.children.forEach(c => { if (c !== plinth) c.position.y += .16; });
   peccy.scale.setScalar(1.45);
@@ -889,7 +894,7 @@ function securityLobby(scene) {
   // exit route: an evenly spaced row from the desk toward the badge-out gates
   for (const [dx, dz] of [[73.4, 2.4], [75.9, 4.0], [78.4, 5.6]])
     W.anchors.floorDecal(scene, W.anchors.walkDecalM, dx, dz, 2.5, 1.6);
-  trash(scene, 70.8, 16.2, 0x6a6e73);
+  trash(scene, 66.3, 15.7, 0x6a6e73); // against the mural wall, out of the walkway
 
   hedgeGateWall(scene);
   entryLobby(scene);
