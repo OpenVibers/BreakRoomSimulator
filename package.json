@@ -1,0 +1,23 @@
+{
+  "name": "amazon-break-room-simulator",
+  "version": "1.0.0",
+  "description": "Amazon Break Room Simulator — realtime multiplayer 3D break room based on real photos",
+  "type": "module",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js"
+  },
+  "keywords": ["game", "multiplayer", "three.js", "websocket"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OpenVibers/BreakRoomSimulator.git"
+  },
+  "homepage": "https://simulator.rest",
+  "bugs": { "url": "https://github.com/OpenVibers/BreakRoomSimulator/issues" },
+  "dependencies": {
+    "express": "^5.2.1",
+    "three": "^0.185.1",
+    "ws": "^8.21.1"
+  }
+}

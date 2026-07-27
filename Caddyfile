@@ -1,0 +1,6 @@
+# simulator.rest — automatic HTTPS via Let's Encrypt.
+# Caddy proxies both HTTP and the websocket upgrade to the game server.
+simulator.rest, www.simulator.rest {
+	encode zstd gzip
+	reverse_proxy game:3000
+}

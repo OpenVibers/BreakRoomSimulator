@@ -1,0 +1,25 @@
+services:
+  game:
+    build: .
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+    volumes:
+      - ./data:/app/data          # players, highscores, map edits persist here
+    ports:
+      - "127.0.0.1:3000:3000"     # only exposed locally; Caddy proxies the public side
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
