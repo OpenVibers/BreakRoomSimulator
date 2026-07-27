@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-2de07c)](LICENSE)
 
 A **free, open-source** realtime multiplayer 3D web game recreating an Amazon fulfillment
-center break room, modeled from real photos. Runs on desktop and mobile — no build step,
+center break room. Runs on desktop and mobile — no build step,
 vanilla JS + Three.js.
 
 🎮 **Play it live: [simulator.rest](https://simulator.rest)** · 💻 **Source: [github.com/OpenVibers/BreakRoomSimulator](https://github.com/OpenVibers/BreakRoomSimulator)**
@@ -23,7 +23,7 @@ npm start          # → http://localhost:3000
 Open the URL on any device on your network (`http://<your-ip>:3000`) and everyone shares
 the same break room. `?autoguest` in the URL skips the login screen with a guest account.
 
-## The building (photo-accurate route)
+## The building (the real route, from countless break-room trips)
 
 You spawn on the **landscaped front walkway** (planter beds, Amazon Tours signs,
 food truck, flag pole, bollarded plaza) under the huge white facade with its
@@ -56,7 +56,7 @@ smoke cage outside). All exterior cafeteria doors are emergency-exit-only.
   Vest color and win stats persist per account.
 - **Realtime multiplayer** — websocket sync (12 Hz snapshots): avatars, walk/run/sit
   animation, name tags, chat with speech bubbles, join/leave feed.
-- **The room, from the photos**:
+- **The room**:
   - Lounge: leather couches inside blue-tape outlines labeled *COUCH*, oriental rug,
     coffee tables, bookshelves with board games, palm plants, *Together at Amazon* banner
   - Games corner: two JOOLA-style ping pong tables, yellow *PRIME BREAKER* arcade
@@ -65,7 +65,7 @@ smoke cage outside). All exterior cafeteria doors are emergency-exit-only.
     green → brown → orange → yellow, napkin dispensers, *July Newsletter* table tents
   - *avenue C* micro-market: glass-door coolers, snack slat-walls, self-checkout kiosks,
     Pepsi vending machines, Red Bull cooler, coffee station, microwaves, lockers
-  - Annex corridor through the wide passage (from the panorama): day lockers,
+  - Annex corridor through the wide passage: day lockers,
     avenue C café/servery nook, glass-walled wellness room, teal walking-path
     tape with red STOP floor decals, second entrance doors
   - International flags around the whole perimeter + strung across the hall,

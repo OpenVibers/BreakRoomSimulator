@@ -1,7 +1,7 @@
 {
   "name": "amazon-break-room-simulator",
   "version": "1.0.0",
-  "description": "Amazon Break Room Simulator — realtime multiplayer 3D break room based on real photos",
+  "description": "Amazon Break Room Simulator — realtime multiplayer 3D break room",
   "type": "module",
   "main": "server/server.js",
   "scripts": {

@@ -1,4 +1,4 @@
-// Builds the break room from the reference photos:
+// Builds the break room from many trips to the real break room:
 //  west (x=-38): glass entrance, lounge (couches w/ tape outlines, rug, giant Connect 4, bookshelves)
 //  games corner: 2 JOOLA-style ping pong tables, arcade cabinet, chess table
 //  center/east: long rows of folding tables, chairs color-zoned green→brown→orange→yellow
@@ -65,7 +65,7 @@ function shell(scene) {
   scene.add(blocker(box(76, .2, 34, M.ceiling, 0, 6.3, 0)));
 
   // ---- dining ceiling (x -12..38): white acoustic tile field at 4.9 with
-  // recessed higher sections framed in yellow fascia (photos 3/5/7) ----
+  // recessed higher sections framed in yellow fascia (from trips) ----
   const tile = TX.ct(512, 512, (g, w, h) => {
     g.fillStyle = '#eceeef'; g.fillRect(0, 0, w, h);
     g.strokeStyle = '#c9ccd0'; g.lineWidth = 3;
@@ -91,7 +91,7 @@ function shell(scene) {
   scene.add(blocker(fieldMesh));
   for (const [cx, cz, cw, cd] of RECESSES) {
     // recessed white upper ceiling; light-blue fascia band with a yellow
-    // accent stripe at its base (panorama shows blue-edged clouds)
+    // accent stripe at its base (walk-through shows blue-edged clouds)
     scene.add(blocker(box(cw, .1, cd, M.white, cx, 5.75, cz)));
     scene.add(box(cw + .16, .8, .1, M.blueSoffit, cx, 5.35, cz - cd / 2));
     scene.add(box(cw + .16, .8, .1, M.blueSoffit, cx, 5.35, cz + cd / 2));
@@ -106,7 +106,7 @@ function shell(scene) {
     for (const oz of [-cd / 4, cd / 4]) scene.add(box(cw * .7, .08, .15, lin0, cx, 5.15, cz + oz));
   }
 
-  // ---- big sloped blue-gray soffit at the tall-section transition (photo 3) ----
+  // ---- big sloped blue-gray soffit at the tall-section transition (from trips) ----
   const slope = box(.16, 3.0, 34, M.blueSoffit, 0, 0, 0);
   slope.rotation.z = -.55;
   slope.position.set(-12.7, 5.45, 0);
@@ -116,26 +116,24 @@ function shell(scene) {
   scene.add(box(24, .5, 1.0, M.blueSoffit, -26, 5.55, 8.6));
 
   // walls — north (z=-17): glass only at the lounge corner; the games/dining
-  // stretch is solid gray with the emergency-exit door + arcade (photo 9)
+  // stretch is solid gray with the emergency-exit door + arcade (from trips)
   wallWithWindows(scene, { axis: 'z', at: -17, from: -38, to: -30 });
   scene.add(blocker(box(16.7, 6.2, .3, M.wallDark, -21.65, 3.1, -17)));
-  scene.add(blocker(box(1.7, 6.2, .3, M.wallDark, -12.35 + 1.5, 3.1, -17)));
-  // wide corridor opening at x 12..17 into the service hallway (pano 191856299)
+  // solid through to the corridor opening — the hallway (restrooms, microwaves,
+  // smoke cage) is reached through the wide walkway, not an emergency door
+  scene.add(blocker(box(3.4, 6.2, .3, M.wallDark, -11.65, 3.1, -17)));
+  // wide corridor opening at x 12..17 into the service hallway (from trips)
   scene.add(blocker(box(22, 6.2, .3, M.wall, 1, 3.1, -17)));
   scene.add(blocker(box(21, 6.2, .3, M.wall, 27.5, 3.1, -17)));
   scene.add(blocker(box(5.4, 3.6, .3, M.wall, 14.5, 4.4, -17)));
-  // metal corner guards on the opening (photo 205701520)
+  // metal corner guards on the opening (from trips)
   scene.add(box(.12, 2.6, .35, M.chrome, 12.05, 1.3, -17));
   scene.add(box(.12, 2.6, .35, M.chrome, 16.95, 1.3, -17));
-  collide(-21.65, -17.1, 16.7, .6); collide(-10.85, -17.1, 1.7, .6);
+  collide(-21.65, -17.1, 16.7, .6); collide(-11.65, -17.1, 3.4, .6);
   collide(1, -17.1, 22, .6); collide(27.5, -17.1, 21, .6);
   serviceHallway(scene);
-  // full-height backing panel in the exit-door bay — the gap above/around the
-  // 2.4 m door slab looked straight through into the lit hallway (Bug30)
-  scene.add(blocker(box(1.8, 6.2, .14, M.wallDark, -12.5, 3.1, -17.02)));
-  exitDoor(scene, -12.6, -16.85, 0);
-  // south (z=17): long glass run with parking outside (photos 1/2/4) and a second
-  // set of entry doors near the market end (panorama), wall far east
+  // south (z=17): long glass run with parking outside (from trips) and a second
+  // set of entry doors near the market end (from trips), wall far east
   wallWithWindows(scene, { axis: 'z', at: 17, from: -38, to: 10, doorAt: 6, doorW: 2.0 });
   // these south doors are emergency-exit-only: closed leaves + signage + sealed
   const sSignM = new THREE.MeshBasicMaterial({ map: emergencySignTexture() });
@@ -149,15 +147,15 @@ function shell(scene) {
   collide(6, 16.95, 2.3, .5);
   scene.add(blocker(box(28, 6.2, .3, M.wall, 24, 3.1, 17)));
   collide(24, 17.1, 28, .6);
-  // east wall (x=38): wide open passage into the locker/wellness annex (panorama)
+  // east wall (x=38): wide open passage into the locker/wellness annex (from trips)
   scene.add(blocker(box(.3, 6.2, 14.5, M.wall, 38, 3.1, -9.75)));
   scene.add(blocker(box(.3, 6.2, 12.8, M.wall, 38, 3.1, 10.6)));
   scene.add(blocker(box(.3, 2.3, 6.7, M.wall, 38, 5.05, .85)));   // header over the opening
-  scene.add(box(.24, .55, 6.7, M.blueSoffit, 38, 3.65, .85));     // blue accent band (panorama)
+  scene.add(box(.24, .55, 6.7, M.blueSoffit, 38, 3.65, .85));     // blue accent band (from trips)
   collide(38.1, -9.75, .6, 14.5); collide(38.1, 10.6, .6, 12.8);
   // close the height step between cafeteria (6.2) and the taller hall (7.2)
   scene.add(blocker(box(.3, 1.1, 34, M.white, 38, 6.75, 0)));
-  // double doors propped open at the passage (photo 192150685) + flags + clock above
+  // double doors propped open at the passage (from trips) + flags + clock above
   for (const [dz, ry] of [[-2.7, .95], [4.4, -.95]]) {
     const leaf = box(.08, 2.3, 1.5, new THREE.MeshStandardMaterial({ color: 0xf2f1ec, roughness: .7 }), 0, 1.15, 0);
     leaf.add(box(.09, .5, .5, new THREE.MeshStandardMaterial({ color: 0x9aa4ae, roughness: .3, metalness: .5 }), 0, -.7, 0)); // kick plate
@@ -178,7 +176,7 @@ function shell(scene) {
   wallWithWindows(scene, { axis: 'x', at: -38, from: 2, to: 17, tall: true });
   entrance(scene);
 
-  // interior gray column pair (photo 4)
+  // interior gray column pair (from trips)
   for (const z of [-6, 6]) { scene.add(blocker(box(1, 6.2, 1, M.white, -10, 3.1, z))); collide(-10, z, 1, 1); }
 
   // pendant dome lights + linear fixtures (emissive, no real lights for perf)
@@ -192,9 +190,9 @@ function shell(scene) {
     const d = new THREE.Mesh(dome, domeMat); d.position.set(x, hangY, z); dGroup.add(d);
     const b = new THREE.Mesh(bulb, domeMat); b.position.set(x, hangY - .04, z); dGroup.add(b);
   };
-  // tall games/lounge section: dense rows of long-drop pendants (photos 8-10)
+  // tall games/lounge section: dense rows of long-drop pendants (from trips)
   for (let gx = -36; gx <= -15; gx += 4.2) for (let gz = -14.5; gz <= 15; gz += 5.8) hang(gx, gz, 3.35, 6.2);
-  // dining: pendants drop below the tile ceiling along the rows (photos 3/5/7)
+  // dining: pendants drop below the tile ceiling along the rows (from trips)
   for (let gx = -9; gx <= 36; gx += 6.4) for (let gz = -13.5; gz <= 13.5; gz += 6.6) hang(gx, gz, 3.95, 4.9);
   scene.add(dGroup);
   // long continuous linear fluorescent runs (suspended twin tubes)
@@ -260,9 +258,9 @@ function wallWithWindows(scene, { axis, at, from, to, doorAt = null, doorW = 0, 
 }
 
 // ============================================================ LOCKER HALLWAY (z 17..31, x 58..92)
-// Satellite map: the lockers strip sits between the security block (north) and
+// site plan: the lockers strip sits between the security block (north) and
 // the cafeteria (south). You come south through the PAE2 detector lanes, walk a
-// straight aisle flanked by tan locker banks (photo 192150685) and reach the
+// straight aisle flanked by tan locker banks (from trips) and reach the
 // cafeteria double doors at z=31.
 function lockerHall(scene) {
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(34, 14), new THREE.MeshStandardMaterial({ map: TX.concreteTexture(), roughness: .38, metalness: .08 }));
@@ -340,7 +338,7 @@ function lockerHall(scene) {
   ex2.position.set(68.5, 2.95, 17.25);
   scene.add(ex2);
 
-  // gray prep table + cart just past the screening lanes (photo 192244996)
+  // gray prep table + cart just past the screening lanes (from trips)
   scene.add(box(1.5, .05, .65, new THREE.MeshStandardMaterial({ color: 0x9aa4ae, roughness: .5, metalness: .3 }), 77.6, .74, 18.5));
   for (const [lx3, lz3] of [[-.55, -.22], [.55, -.22], [-.55, .22], [.55, .22]]) scene.add(cyl(.02, .02, .72, M.blackMetal, 77.6 + lx3, .37, 18.5 + lz3, 6));
   collide(77.6, 18.5, 1.6, .75);
@@ -363,7 +361,7 @@ function lockerHall(scene) {
 }
 
 // ============================================================ SECURITY ROOM (x 62..80)
-// Pano 153354733 + photos 153342206/153343798: the white PAE2 soffit structure is a
+// From break-room trips: the white PAE2 soffit structure is a
 // FREESTANDING ISLAND in the middle of the room — curved mural desk wrapping its
 // SE corner facing the gates, metal-detector lanes through its west side. Behind it
 // (north wall) sit the Safe to Go arch into the FC, the elevator, the US flag and
@@ -393,7 +391,7 @@ function securityLobby(scene) {
   collide(68.1, -17.1, 12.2, .6);
   collide(76.2, -17.1, 1.2, .6); collide(85.1, -17.1, 13.8, .6);
 
-  // elevator doors on the north wall (photo 153342206: right of the arch corner)
+  // elevator doors on the north wall (right of the arch corner)
   scene.add(box(2.0, 2.35, .12, new THREE.MeshStandardMaterial({ color: 0x9aa4ae, roughness: .35, metalness: .6 }), 68.5, 1.18, -16.86));
   scene.add(box(.05, 2.2, .1, new THREE.MeshStandardMaterial({ color: 0x3d4045, roughness: .5 }), 68.5, 1.15, -16.8));
   scene.add(box(.14, .2, .06, new THREE.MeshStandardMaterial({ color: 0xd8d4cc, roughness: .4 }), 69.7, 1.1, -16.8));
@@ -405,11 +403,11 @@ function securityLobby(scene) {
   const elS = new THREE.Mesh(new THREE.PlaneGeometry(1.2, .3), new THREE.MeshBasicMaterial({ map: elTex }));
   elS.position.set(68.5, 2.72, -16.8);
   scene.add(elS);
-  // red fire strobe beside the Day One door (photo 153339387)
+  // red fire strobe beside the Day One door (from trips)
   scene.add(box(.18, .26, .12, new THREE.MeshStandardMaterial({ color: 0xc22127, roughness: .5 }), 78.6, 2.2, -16.86));
 
   // ---- WEST WALL (x=62): solid mountain/airplane mural with the FC arch opening
-  // (z -12..-6). The FC mass lies west of here (satellite map). ----
+  // (z -12..-6). The FC mass lies west of here (site plan). ----
   scene.add(blocker(box(.3, 7.2, 5, M.white, 62, 3.6, -14.5)));    // z -17..-12
   scene.add(blocker(box(.3, 7.2, 23, M.white, 62, 3.6, 5.5)));     // z -6..17
   scene.add(blocker(box(.3, 2.8, 6, M.white, 62, 5.8, -9)));       // header over the FC opening
@@ -445,7 +443,7 @@ function securityLobby(scene) {
     low.rotation.y = Math.PI / 2; low.position.set(62.32, 1.32, lz);
     scene.add(low);
   }
-  // hanging US flag + Pack One Goal banner flanking the arch (pano)
+  // hanging US flag + Pack One Goal banner flanking the arch (from trips)
   const usFlag = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 1.7), new THREE.MeshStandardMaterial({ map: TX.flagTexture('usa'), side: THREE.DoubleSide }));
   usFlag.rotation.y = Math.PI / 2;
   usFlag.position.set(62.5, 5.8, -13.9);
@@ -542,7 +540,7 @@ function securityLobby(scene) {
   scene.add(stopFC);
 
   // ---- SOUTH WALL (z=17): mural-faced wall with a plain OPENING into the locker
-  // area (FrontAreaPhoto: "the locker area has an opening on the middle wall" —
+  // area ("the locker area has an opening on the middle wall" —
   // no detectors here). Entry-lobby stretch (x 80..92) stays solid blue. ----
   scene.add(blocker(box(18, 5.9, .3, structM, 71, 5.45, 17)));     // white header 62..80
   scene.add(blocker(box(12, 5.9, .3, blueWall, 86, 5.45, 17)));    // blue header 80..92
@@ -570,7 +568,7 @@ function securityLobby(scene) {
   exS.rotation.y = Math.PI; exS.position.set(70.5, 2.9, 16.82);
   scene.add(exS);
 
-  // ---- METAL DETECTORS (FrontAreaPhoto / 153342206): three lanes rotated 90°,
+  // ---- METAL DETECTORS (from trips): three lanes rotated 90°,
   // in line with the Safe to Go arch — everyone leaving the warehouse walks the
   // arch, then a detector lane, under a white soffit joined to the desk island ----
   scene.add(blocker(box(4.6, 2.6, 7.4, structM, 63.9, 4.9, -9.1))); // soffit bridge wall→island
@@ -597,7 +595,7 @@ function securityLobby(scene) {
   for (const [lx3, lz3] of [[-.5, -.2], [.5, -.2], [-.5, .2], [.5, .2]]) scene.add(cyl(.02, .02, .72, M.blackMetal, 63.2 + lx3, .37, -13.3 + lz3, 6));
   collide(63.2, -13.3, 1.5, .7);
 
-  // ---- secondary screening (southwest corner, photo 153343798): ONE detector +
+  // ---- secondary screening (southwest corner, from trips): ONE detector +
   // one table, tucked against the mural clear of the locker-room doorway ----
   scene.add(box(.6, 2.15, .18, detM, 63.4, 1.08, 12.85));
   scene.add(box(.6, 2.15, .18, detM, 63.4, 1.08, 13.95));
@@ -621,7 +619,7 @@ function securityLobby(scene) {
   ssW.rotation.y = Math.PI / 2; ssW.position.set(62.4, 2.15, 13.4);
   scene.add(ssW);
 
-  // ---- THE PAE2 ISLAND (photo 153342206): one long freestanding white soffit
+  // ---- THE PAE2 ISLAND (from trips): one long freestanding white soffit
   // structure facing the gates — desk on the RIGHT (north) end, exit-screening
   // metal-detector bays on the LEFT (south) end feeding the exit turnstiles.
   // The FC arch sits further right (north wall). ----
@@ -641,7 +639,7 @@ function securityLobby(scene) {
   const paeS = new THREE.Mesh(new THREE.PlaneGeometry(5.6, 2.0), new THREE.MeshStandardMaterial({ map: paeTex }));
   paeS.position.set(68.6, 4.9, -1.14);
   scene.add(paeS);
-  // ---- curved mural desk on the north end of the front (photo 153342206:
+  // ---- curved mural desk on the north end of the front (from trips:
   // chevron at the right end, curved cap toward the detectors) ----
   const muralTex = TX.ct(1024, 128, (g, w, h) => {
     g.fillStyle = '#f5f4f0'; g.fillRect(0, 0, w, h);
@@ -708,7 +706,7 @@ function securityLobby(scene) {
   kite.position.set(77, 6.2, 4);
   scene.add(kite);
 
-  // ---- display cluster between the arch and Career Choice (pano): light-up PAE2
+  // ---- display cluster between the arch and Career Choice (from trips): light-up PAE2
   // letters, the big Peccy statue, black tours table with TV ----
   const letterTex = (ch) => TX.ct(128, 160, (g, w, h) => {
     g.clearRect(0, 0, w, h);
@@ -795,7 +793,7 @@ function securityLobby(scene) {
   moD.rotation.x = -Math.PI / 2; moD.position.set(73.0, .012, -10.4); moD.renderOrder = 1;
   scene.add(moD);
 
-  // ---- Career Choice alcove dressing (photo 153339387): Grow banner, wire rack,
+  // ---- Career Choice alcove dressing (from trips): Grow banner, wire rack,
   // black cubby lockers, LOCKERS tape, New Hires decals, safety board ----
   const growTex = TX.ct(192, 384, (g, w, h) => {
     g.fillStyle = '#f2f5f8'; g.fillRect(0, 0, w, h);
@@ -901,7 +899,7 @@ function securityLobby(scene) {
 // User-described: right of the security desk leads into the FC; beyond that are
 // the "Day One" and "Career Choice" meeting rooms.
 function dayOneRooms(scene) {
-  // photo 153339387: Career Choice alcove on the LEFT (west), Day 1 Training
+  // Career Choice alcove on the LEFT (west), Day 1 Training
   // room on the RIGHT (east), safety board east of Day One, jamb corner guards
   const roomFloor = new THREE.Mesh(new THREE.PlaneGeometry(7.4, 7), new THREE.MeshStandardMaterial({ color: 0x8a8d90, roughness: .9 }));
   roomFloor.rotation.x = -Math.PI / 2; roomFloor.position.set(76.6, .005, -20.5);
@@ -931,7 +929,7 @@ function dayOneRooms(scene) {
   });
   scene.add(new THREE.Mesh(new THREE.PlaneGeometry(1.15, 2.3), new THREE.MeshBasicMaterial({ map: ccDoorTex })).translateX(74.9).translateY(1.15).translateZ(-16.86));
   scene.add(new THREE.Mesh(new THREE.PlaneGeometry(1.15, 2.3), new THREE.MeshBasicMaterial({ map: dayDoorTex })).translateX(77.5).translateY(1.15).translateZ(-16.86));
-  // stainless corner guards on the jambs (photo)
+  // stainless corner guards on the jambs (from trips)
   for (const gx of [74.2, 75.6, 76.8, 78.2]) scene.add(box(.1, 2.5, .18, M.chrome, gx, 1.25, -16.9));
   // signs: Career Choice wall flag (west) + Day 1 Training room hanging sign (east)
   const ccSignTex = TX.ct(192, 96, (g, w, h) => {
@@ -972,7 +970,7 @@ function dayOneRooms(scene) {
 }
 
 // ============================================================ HEDGE GATE WALL (x=80)
-// Pano 193021419: green hedge feature wall with neon "Welcome to PAE2" script,
+// From break-room trips: green hedge feature wall with neon "Welcome to PAE2" script,
 // red garland, Enter + Do-Not-Enter turnstile openings, and a window into PAE2.
 function hedgeGateWall(scene) {
   const hedgeTex = TX.ct(256, 256, (g, w, h) => {
@@ -1059,13 +1057,13 @@ function hedgeGateWall(scene) {
       inter({ id: gate.id, type: 'gate', x: 80, z: lz, r: 1.5, label: kind === 'enter' ? 'Badge through the gate' : 'Badge out (Do Not Enter side)', data: { gate: gate.id } });
     }
   };
-  mkGates([-8.3, -7.05, -5.8, -4.55], 'enter'); // 4 entry lanes (pano 193021419)
+  mkGates([-8.3, -7.05, -5.8, -4.55], 'enter'); // 4 entry lanes (from trips)
   mkGates([4.55, 5.8, 7.05, 8.3], 'exit');      // 4 exit lanes
 }
 
 // ============================================================ ENTRY LOBBY (x 80..92)
 function entryLobby(scene) {
-  // Amazon Family World Map mural on the north wall (photo/pano)
+  // Amazon Family World Map mural on the north wall (from trips)
   const mapTex = TX.ct(1024, 512, (g, w, h) => {
     g.fillStyle = '#2a72b8'; g.fillRect(0, 0, w, h);
     g.fillStyle = '#fff'; g.font = '600 44px "Segoe UI", sans-serif'; g.textAlign = 'left';
@@ -1093,7 +1091,7 @@ function entryLobby(scene) {
   const aed = new THREE.Mesh(new THREE.PlaneGeometry(.7, .7), new THREE.MeshBasicMaterial({ map: aedTex, transparent: true, side: THREE.DoubleSide }));
   aed.position.set(82, 5.6, -16.7);
   scene.add(aed);
-  // cocktail table + literature stand (south side, like pano left area)
+  // cocktail table + literature stand (south side, from trips)
   scene.add(cyl(.45, .45, .04, new THREE.MeshStandardMaterial({ color: 0x17181c, roughness: .7 }), 84, 1.08, 13.5, 14));
   scene.add(cyl(.09, .34, 1.08, new THREE.MeshStandardMaterial({ color: 0x17181c, roughness: .7 }), 84, .54, 13.5, 10));
   collide(84, 13.5, 1.0, 1.0);
@@ -1111,7 +1109,7 @@ function entryLobby(scene) {
     b.position.set(80.9, 1.1, bz);
     scene.add(b);
   }
-  // traffic cone by the enter gates (pano)
+  // traffic cone by the enter gates (from trips)
   scene.add(cyl(.03, .18, .55, new THREE.MeshStandardMaterial({ color: 0xe06a1e, roughness: .6 }), 81.6, .28, -8.9, 10));
   // floor guidance (Bug29): one coherent enter path from the front doors to the
   // Enter lanes — alternating smile arrows and walk decals, evenly spaced and
@@ -1168,7 +1166,7 @@ function entryLobby(scene) {
     }
     scene.add(new THREE.Mesh(new THREE.PlaneGeometry(.6, .25), new THREE.MeshBasicMaterial({ map: bayLabel(label) })).translateX(91.85).translateY(2.72).translateZ(bz).rotateY(-Math.PI / 2));
   }
-  // black trash barrels between the bays (photos)
+  // black trash barrels between the bays (from trips)
   for (const bz of [-5.2, 5.2, 12.5]) {
     scene.add(cyl(.34, .3, .85, new THREE.MeshStandardMaterial({ color: 0x1d2126, roughness: .8 }), 92.9, .43, bz, 12));
     collide(92.9, bz, .7, .7);
@@ -1186,21 +1184,6 @@ function entryLobby(scene) {
     d.rotation.y = -Math.PI / 2; d.position.set(91.9, 1.6, dz);
     scene.add(d);
   }
-}
-
-function exitDoor(scene, x, z, ry) {
-  const g = new THREE.Group();
-  g.add(box(1.1, 2.4, .1, new THREE.MeshStandardMaterial({ color: 0x2e3238, roughness: .6 }), 0, 1.2, 0));
-  g.add(box(.9, .5, .02, new THREE.MeshStandardMaterial({ color: 0x9aa4ae, roughness: .3, metalness: .4 }), 0, 1.55, .06)); // push bar? window
-  const signTex = TX.ct(128, 96, (gg, w, h) => {
-    gg.fillStyle = '#c22127'; gg.fillRect(0, 0, w, h);
-    gg.fillStyle = '#fff'; gg.font = '700 17px Arial'; gg.textAlign = 'center';
-    gg.fillText('EMERGENCY', w / 2, 34); gg.fillText('EXIT ONLY', w / 2, 58);
-  });
-  g.add(new THREE.Mesh(new THREE.PlaneGeometry(.42, .3), new THREE.MeshBasicMaterial({ map: signTex })).translateY(1.6).translateZ(.07));
-  g.position.set(x, 0, z); g.rotation.y = ry;
-  scene.add(g);
-  collide(x, z, 1.2, 1.2);
 }
 
 function emergencySignTexture() {
@@ -1280,7 +1263,7 @@ function exterior(scene) {
     t.position.set(x, 0, z);
     scene.add(t);
   }
-  // stop sign (photo 8)
+  // stop sign (from trips)
   const sign = new THREE.Group();
   sign.add(cyl(.04, .04, 2.6, M.chrome, 0, 1.3, 0, 8));
   const oct = new THREE.Mesh(new THREE.CylinderGeometry(.45, .45, .04, 8), new THREE.MeshStandardMaterial({ color: 0xc22127, roughness: .5 }));
@@ -1296,7 +1279,7 @@ function exterior(scene) {
   sign.add(stopF);
   sign.position.set(-44.5, 0, -5.5); sign.rotation.y = Math.PI / 2;
   scene.add(sign);
-  // traffic cones (photo 2)
+  // traffic cones (from trips)
   for (const [x, z] of [[-42.5, -9.5], [-42.5, -11], [-43.5, -12.5]]) {
     const cone = cyl(.03, .18, .55, new THREE.MeshStandardMaterial({ color: 0xe06a1e, roughness: .6 }), x, .28, z, 10);
     scene.add(cone);
@@ -1311,7 +1294,7 @@ function exterior(scene) {
 }
 
 // ============================================================ LOUNGE
-// Photos 8/10: the couch corner sits in the NW glass corner (two window walls
+// From many break-room trips: the couch corner sits in the NW glass corner (two window walls
 // meeting), right next to the ping pong tables. Exactly 2 couches + 1 armchair.
 function lounge(scene) {
   // rug centered in the corner group
@@ -1336,7 +1319,7 @@ function lounge(scene) {
   bookshelf(scene, -37.2, 3.6, Math.PI / 2);
   for (const [x, z] of [[-36.8, 6.4], [-25.6, 15.8], [-35.8, 8.6]]) plant(scene, x, z);
 
-  // hazard tape square just inside the entrance (photo 4)
+  // hazard tape square just inside the entrance (from trips)
   const hz = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 1.4), new THREE.MeshBasicMaterial({ map: TX.hazardSquareTexture(), transparent: true }));
   hz.rotation.x = -Math.PI / 2; hz.position.set(-30.5, .014, 1.6);
   scene.add(hz);
@@ -1455,23 +1438,23 @@ function trash(scene, x, z, color) {
 }
 
 // ============================================================ GAMES CORNER
-// Photo 9: both ping pong tables sit side by side along the solid north wall,
+// From trips: both ping pong tables sit side by side along the solid north wall,
 // immediately east of the couch corner; arcade + exit door further along.
 function gamesCorner(scene) {
   pingPongTable(scene, 'a', -28.7, -12.4);
   pingPongTable(scene, 'b', -21.3, -12.4);
   arcade(scene, -15.6, -16.2);
   chessTable(scene, -33.2, 4.2);
-  connect4(scene, 'a', -36.9, -6.6, Math.PI / 2);   // against west glass by the lounge (photo 8)
-  connect4(scene, 'b', -27.3, 12.4, -.4);           // mid-floor near the south windows (photo 10)
-  // loose lime chairs by the pong tables (photo 9)
+  connect4(scene, 'a', -36.9, -6.6, Math.PI / 2);   // against west glass by the lounge (from trips)
+  connect4(scene, 'b', -27.3, 12.4, -.4);           // mid-floor near the south windows (from trips)
+  // loose lime chairs by the pong tables (from trips)
   for (const [x, z, ry] of [[-31.9, -10.6, 2.4], [-25.2, -10.4, -2.8], [-18.2, -13.6, 1.2]]) {
     const c = simpleChair(M.chairGreen);
     c.position.set(x, 0, z); c.rotation.y = ry;
     scene.add(c);
     W.seats.push({ id: `loose-${x.toFixed(0)}`, x, z, y: .5, ry: ry + Math.PI, type: 'chair', exitX: x + Math.sin(ry), exitZ: z + Math.cos(ry) });
   }
-  // cornhole board leaning on wall (photo 9)
+  // cornhole board leaning on wall (from trips)
   const ch = box(.62, .04, 1.2, M.wood, 0, 0, 0);
   ch.position.set(-17.8, .6, -16.55); ch.rotation.x = -1.15;
   const hole = cyl(.09, .09, .05, M.blackMetal, -17.8, 1.0, -16.42); hole.rotation.x = -1.15;
@@ -1642,7 +1625,7 @@ function connect4(scene, id, x, z, ry) {
   g.add(box(.12, .32, .7, blue, -.89, .16, 0));
   g.add(box(.12, .32, .7, blue, .89, .16, 0));
   g.position.set(x, 0, z); g.rotation.y = ry;
-  g.scale.setScalar(.72); // real one is ~4 ft tall (photo 8)
+  g.scale.setScalar(.72); // real one is ~4 ft tall (from trips)
   scene.add(g);
   collide(x, z, 1.6, .8);
   // disc pool (42) — laid out by minigames.js in board-local coords then transformed
@@ -1678,14 +1661,14 @@ function connect4(scene, id, x, z, ry) {
 // ============================================================ DINING
 function dining(scene) {
   const clusters = [];
-  // zone order from the photos, west→east: brown, green, orange, yellow
+  // zone order from trips, west→east: brown, green, orange, yellow
   const zoneMats = [M.chairBrown, M.chairGreen, M.chairOrange, M.chairYellow];
   const xStarts = [-8.2, 2.0, 12.2, 22.4];
   const rows = [-14, -11.3, -8.6, -5.9, -3.2, 3.2, 5.9, 8.6, 11.3, 14];
   for (let zi = 0; zi < 4; zi++) for (const rz of rows) clusters.push({ x: xStarts[zi] + 3.6, z: rz, zone: zi });
 
   // each cluster = four 6-ft (1.78 m) folding tables butted end to end, with
-  // visible seams and folding legs at each table end (photos 3/5/7)
+  // visible seams and folding legs at each table end (from trips)
   const TL = 1.78, GAP = .045, PER = 4;
   const topGeo = new THREE.BoxGeometry(TL, .05, .76);
   const edgeGeo = new THREE.BoxGeometry(TL + .02, .07, .8);
@@ -1715,7 +1698,7 @@ function dining(scene) {
   });
   scene.add(tops, edges, legs);
 
-  // chairs packed tight, ~0.72 m pitch, 10 per side (photos show shoulder-to-shoulder)
+  // chairs packed tight, ~0.72 m pitch, 10 per side (shoulder-to-shoulder)
   const seatGeo = new THREE.BoxGeometry(.46, .05, .45);
   const backGeo = new THREE.BoxGeometry(.46, .48, .05);
   const sledGeo = new THREE.CylinderGeometry(.016, .016, .5, 6);
@@ -1779,7 +1762,7 @@ function dining(scene) {
   });
   scene.add(disps, tents, sans);
 
-  // window-side laptop cart with orange chair + blue CABLE tape (photo 4)
+  // window-side laptop cart with orange chair + blue CABLE tape (from trips)
   const cart = new THREE.Group();
   cart.add(box(.7, 1.1, .55, new THREE.MeshStandardMaterial({ color: 0x33373d, roughness: .5 }), 0, .55, 0));
   cart.add(box(.42, .26, .03, new THREE.MeshStandardMaterial({ color: 0x1b2731, roughness: .25 }), 0, 1.28, -.1)); // laptop screen
@@ -1806,7 +1789,7 @@ function market(scene) {
   const signB = new THREE.Mesh(new THREE.PlaneGeometry(3.6, .58), new THREE.MeshStandardMaterial({ map: TX.avenueCTexture() }));
   signB.rotation.y = -Math.PI / 2; signB.position.set(37.5, 3.3, 8);
   scene.add(signB);
-  // sign above north lockers too (photo 5)
+  // sign above north lockers too (from trips)
   const sign2 = new THREE.Mesh(new THREE.PlaneGeometry(3.4, .55), new THREE.MeshStandardMaterial({ map: TX.avenueCTexture() }));
   sign2.position.set(29, 3.1, -16.8);
   scene.add(sign2);
@@ -1827,9 +1810,9 @@ function market(scene) {
   counterUnit(scene, 34, -13.5);
 
   // ---- north wall fixtures ----
-  // Pepsi machines (photo 3)
+  // Pepsi machines (from trips)
   for (let i = 0; i < 4; i++) vending(scene, -2.5 + i * 1.15, -16.35, i < 2 ? 'pepsi' : 'snack');
-  // lockers (photo 5)
+  // lockers (from trips)
   for (let i = 0; i < 5; i++) lockers(scene, 23.5 + i * 2.1, -16.5);
   // trash + recycle near market
   trash(scene, 20.5, -16.2, 0x2a63c9);
@@ -1911,7 +1894,7 @@ function lockers(scene, x, z, ry = 0) {
   const body = box(2.0, 1.9, .5, new THREE.MeshStandardMaterial({ color: 0xd6cfc0, roughness: .7 }), 0, .95, 0);
   g.add(body);
   W.camBlockers.push(body);
-  // sloped crown like the photo's locker banks
+  // sloped crown like the real locker banks
   const crown = box(2.0, .06, .6, new THREE.MeshStandardMaterial({ color: 0xc7bfae, roughness: .7 }), 0, 2.0, -.04);
   crown.rotation.x = -.4;
   g.add(crown);
@@ -1926,7 +1909,7 @@ function lockers(scene, x, z, ry = 0) {
 
 // ============================================================ FLAGS / TVS / CLOCKS
 function decor(scene) {
-  // flags at the top, all the way around the room (per the photos every wall
+  // flags at the top, all the way around the room (on every wall
   // carries a band of international flags near the ceiling)
   const flagAt = (name, x, z, ry, big = false) => {
     const fl = new THREE.Mesh(
@@ -1939,18 +1922,18 @@ function decor(scene) {
   };
   let fi = 0;
   const next = () => TX.FLAG_NAMES[fi++ % TX.FLAG_NAMES.length];
-  // west glass: big flags hanging over the windows (photos 1-2)
+  // west glass: big flags hanging over the windows (from trips)
   for (let z = -15; z <= 15; z += 3.4) flagAt(next(), -37.4, z, Math.PI / 2, true);
-  // games-corner gray wall row (photo 9: El Salvador, Haiti, USA, Finland, Brazil, Nepal)
+  // games-corner gray wall row (El Salvador, Haiti, USA, Finland, Brazil, Nepal)
   for (const [i, f] of ['elsalvador', 'haiti', 'usa', 'kyrgyzstan', 'finland', 'brazil', 'nepal'].entries())
     flagAt(f, -26 + i * 1.9, -16.72, 0);
   // north wall band, dining stretch
   for (let x = -10; x <= 36; x += 2.6) flagAt(next(), x, -16.72, 0);
-  // south wall band (hangs in front of the glass, like the photos)
+  // south wall band (hangs in front of the glass, like the real one)
   for (let x = -28; x <= 36; x += 2.6) flagAt(next(), x, 16.72, Math.PI);
   // east wall band above the market
   for (let z = -15; z <= 15; z += 2.6) flagAt(next(), 37.6, z, -Math.PI / 2);
-  // flags strung on wires ACROSS the hall (panorama shows transverse strings)
+  // flags strung on wires ACROSS the hall (walk-through shows transverse strings)
   for (const wx of [-2, 14]) {
     scene.add(box(.02, .02, 31, M.blackMetal, wx, 4.62, 0));
     for (let z = -13.8; z <= 13.8; z += 2.3) flagAt(next(), wx, z, Math.PI / 2);
@@ -1959,7 +1942,7 @@ function decor(scene) {
   // TVs — dynamic canvases
   W.dynamic.tvs = [];
   const tvSpots = [
-    { x: -37.6, y: 3.4, z: -8, ry: Math.PI / 2 },   // west glass wall TV (photo 1)
+    { x: -37.6, y: 3.4, z: -8, ry: Math.PI / 2 },   // west glass wall TV (from trips)
     { x: 4, y: 3.6, z: -16.8, ry: 0 },
     { x: 12, y: 3.6, z: 16.8, ry: Math.PI },
     { x: 37.6, y: 4.65, z: -8, ry: -Math.PI / 2 },
@@ -1976,7 +1959,7 @@ function decor(scene) {
     scene.add(frame);
     W.dynamic.tvs.push(tv);
   }
-  // red LED clocks (photos 8-9)
+  // red LED clocks (from trips)
   W.dynamic.clocks = [];
   for (const s of [{ x: -25, y: 3.9, z: -16.85, ry: 0 }, { x: 30, y: 3.4, z: 16.85, ry: Math.PI }, { x: 37.8, y: 3.9, z: 2.5, ry: -Math.PI / 2 }]) {
     const ck = TX.makeClock();
@@ -1987,7 +1970,7 @@ function decor(scene) {
   }
   // exit signs
   const exitM = new THREE.MeshBasicMaterial({ map: TX.ct(128, 48, (g, w, h) => { g.fillStyle = '#200'; g.fillRect(0, 0, w, h); g.fillStyle = '#f33'; g.font = '900 30px Arial'; g.textAlign = 'center'; g.fillText('EXIT', w / 2, 36); }) });
-  for (const s of [{ x: -12.5, z: -16.6, ry: 0 }, { x: -36.5, z: 0, ry: Math.PI / 2, y: 2.9 }]) {
+  for (const s of [{ x: 14.5, z: -16.6, ry: 0 }, { x: -36.5, z: 0, ry: Math.PI / 2, y: 2.9 }]) {
     const e = new THREE.Mesh(new THREE.PlaneGeometry(.5, .2), exitM);
     e.position.set(s.x, s.y || 2.6, s.z); e.rotation.y = s.ry;
     scene.add(e);
@@ -2007,7 +1990,7 @@ function lights(scene) {
 }
 
 // ============================================================ SERVICE HALLWAY (z -17.3..-22.3)
-// Photos 205701520/205713252: long corridor behind the cafeteria north wall —
+// From many break-room trips: long corridor behind the cafeteria north wall —
 // microwave/coffee counter, ice machine, chest freezer, bag racks, bulletin
 // boards, bathrooms, V.STORAGE door; smoke-cage patio at the far west end.
 function serviceHallway(scene) {
@@ -2043,7 +2026,7 @@ function serviceHallway(scene) {
   const lin = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: .8 });
   for (let i = -4; i <= 4; i++) scene.add(box(4.2, .05, .28, lin, i * 6.2, 3.08, -19.8));
 
-  // ---- south side: microwave/coffee counter run (photo 205713252) ----
+  // ---- south side: microwave/coffee counter run (from trips) ----
   const counter = new THREE.Group();
   counter.add(box(24, .9, .7, new THREE.MeshStandardMaterial({ color: 0x6a6e73, roughness: .6, metalness: .3 }), 0, .45, 0));
   counter.add(box(24, .05, .78, new THREE.MeshStandardMaterial({ color: 0xd8d4c8, roughness: .4 }), 0, .93, 0));
@@ -2062,12 +2045,12 @@ function serviceHallway(scene) {
   }
   scene.add(mws);
   inter({ id: 'hall-micro', type: 'micro', x: -14, z: -19, r: 2.6, label: 'Heat up lunch' });
-  // coffee machine + cup rack (photo 205808782-style)
+  // coffee machine + cup rack (from trips)
   scene.add(box(.55, .85, .5, new THREE.MeshStandardMaterial({ color: 0x17181c, roughness: .35 }), -27.3, 1.35, -17.9));
   scene.add(box(.3, .2, .02, new THREE.MeshStandardMaterial({ color: 0x2a72b8, roughness: .2, emissive: 0x1a4a80, emissiveIntensity: .4 }), -27.35, 1.55, -17.62));
   for (let i = 0; i < 3; i++) scene.add(cyl(.055, .04, .3, new THREE.MeshStandardMaterial({ color: 0xf2f0ea, roughness: .5 }), -26.6 + i * .18, 1.85, -17.9, 8));
   inter({ id: 'hall-coffee', type: 'coffee', x: -27, z: -19, r: 1.6, label: 'Brew a coffee' });
-  // ice/water machine + chest freezer + caution cone (photo 205811592)
+  // ice/water machine + chest freezer + caution cone (from trips)
   scene.add(box(1.0, 1.7, .8, new THREE.MeshStandardMaterial({ color: 0xb9bdc2, roughness: .3, metalness: .5 }), .8, .85, -17.9));
   scene.add(box(.5, .3, .1, new THREE.MeshStandardMaterial({ color: 0x14181d }), .8, .8, -17.44));
   collide(.8, -17.9, 1.1, .9);
@@ -2200,7 +2183,7 @@ function serviceHallway(scene) {
 }
 
 // ============================================================ SMOKE CAGE PATIO
-// Photos 205540801/205541712/205604519/205628978: attached covered patio with
+// From many break-room trips: attached covered patio with
 // black chain-link + privacy mesh, black picnic tables, ash receptacles, signs.
 function smokeCagePatio(scene) {
   const X0 = -30, X1 = -18, Z0 = -29.2, Z1 = -22.6; // footprint north of the hallway
@@ -2240,7 +2223,7 @@ function smokeCagePatio(scene) {
     g.fillText('EMERGENCY', w / 2, 40); g.fillText('EXIT ONLY', w / 2, 62);
   });
   scene.add(new THREE.Mesh(new THREE.PlaneGeometry(.55, .4), new THREE.MeshBasicMaterial({ map: emTex, side: THREE.DoubleSide })).translateX(X1 - .01).translateY(1.7).translateZ(cz).rotateY(Math.PI / 2));
-  // smoking-rules signs on the fences (photo 205628978)
+  // smoking-rules signs on the fences (from trips)
   const ruleTex = TX.ct(160, 200, (g, w, h) => {
     g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
     g.fillStyle = '#232f3e'; g.font = '600 15px "Segoe UI", sans-serif'; g.textAlign = 'center';
@@ -2255,7 +2238,7 @@ function smokeCagePatio(scene) {
     g.fillText('E010', w / 2, 33);
   });
   scene.add(new THREE.Mesh(new THREE.PlaneGeometry(.5, .25), new THREE.MeshBasicMaterial({ map: doorTex })).translateX(-27.2).translateY(2.5).translateZ(-22.38));
-  // black expanded-metal picnic tables (photo): table + two attached benches
+  // black expanded-metal picnic tables (from trips): table + two attached benches
   const metalM = new THREE.MeshStandardMaterial({ color: 0x191b1e, roughness: .55, metalness: .35 });
   const picnic = (x, z, ry) => {
     const g = new THREE.Group();
@@ -2291,7 +2274,7 @@ function smokeCagePatio(scene) {
 }
 
 // ============================================================ EAST EXTERIOR
-// Pano 193056495 + photo 193115123: the building front — huge white facade with
+// The building front — huge white facade with
 // blue roofline stripe, wood-band tower with the Amazon smile, blue "main entry"
 // canopy, bollards, landscaped central walkway (spawn), Amazon Tours signs,
 // food truck, flag pole, hydrant. Player spawns on the walkway and badges in.
@@ -2303,7 +2286,7 @@ function exteriorEast(scene) {
   const lot = new THREE.Mesh(new THREE.PlaneGeometry(28, 76), new THREE.MeshStandardMaterial({ map: TX.asphaltTexture(), roughness: .95 }));
   lot.rotation.x = -Math.PI / 2; lot.position.set(112, -.02, 0);
   scene.add(lot);
-  // central landscaped walkway (photo 193115123) — the spawn path
+  // central landscaped walkway (from trips) — the spawn path
   const walkway = new THREE.Mesh(new THREE.PlaneGeometry(22, 3.2), new THREE.MeshStandardMaterial({ color: 0xc3c6c8, roughness: .85 }));
   walkway.rotation.x = -Math.PI / 2; walkway.position.set(109, -.004, 0);
   scene.add(walkway);
@@ -2411,7 +2394,7 @@ function exteriorEast(scene) {
     W.cars.push({ id, group: g, col, driver: null, x: g.position.x, z: g.position.z, ry: Math.PI / 2 });
     inter({ id, type: 'car', x: g.position.x, z: g.position.z, r: 3.4, label: 'Drive the car 🚗', data: { car: id } });
   }
-  // flag pole + hydrant + food truck (pano)
+  // flag pole + hydrant + food truck (from trips)
   const pole = cyl(.05, .07, 9, M.chrome, 94.5, 4.5, -10, 8);
   scene.add(pole);
   const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.5, .95), new THREE.MeshStandardMaterial({ map: TX.flagTexture('usa'), side: THREE.DoubleSide }));
@@ -2456,7 +2439,7 @@ function exteriorEast(scene) {
   const grayM = new THREE.MeshStandardMaterial({ color: 0xb6bcc1, roughness: .9 });
   // greige feature band above the storefront carries the smile
   scene.add(box(.5, 7.2, 34.4, greigeM, 92.35, 9.8, 0));
-  // textured pilaster strips flanking the smile (photo: vertical scratter panels)
+  // textured pilaster strips flanking the smile (vertical scratter panels)
   for (const pz of [-8.5, 8.5]) scene.add(box(.56, 7, 1.6, new THREE.MeshStandardMaterial({ color: 0x8f8b84, roughness: .95 }), 92.3, 9.7, pz));
   // side wings — the building continues far north/south
   for (const s of [-1, 1]) {
@@ -2468,7 +2451,7 @@ function exteriorEast(scene) {
   }
   // blue roofline stripe across everything
   scene.add(box(.56, .8, 82, new THREE.MeshStandardMaterial({ color: 0x2a7de1, roughness: .7 }), 92.3, 13.1, 0));
-  // center tower (gray) with a second blue stripe like photo 193115123
+  // center tower (gray) with a second blue stripe like the real tower
   scene.add(box(3.5, 5.2, 15, grayM, 93.8, 15.5, 0));
   scene.add(box(3.56, .55, 15.1, new THREE.MeshStandardMaterial({ color: 0x2a7de1, roughness: .7 }), 93.8, 14.6, 0));
   const smileTex2 = TX.ct(512, 256, (g, w, h) => {
@@ -2504,8 +2487,8 @@ function exteriorEast(scene) {
   }
 }
 
-// teal walking-path tape + red STOP floor decals (panorama)
-// ground + parking apron along the relocated cafeteria's east glass (satellite:
+// teal walking-path tape + red STOP floor decals (from trips)
+// ground + parking apron along the relocated cafeteria's east glass (site plan:
 // the lot wraps the whole front) and base plane under the south wing
 function exteriorSouth(scene) {
   const lot = new THREE.Mesh(new THREE.PlaneGeometry(32, 84), new THREE.MeshStandardMaterial({ map: TX.asphaltTexture(), roughness: .95 }));
@@ -2546,7 +2529,7 @@ function floorPaths(scene) {
     scene.add(p);
   };
   // main route: front doors → badge gates → past the island desk → south through
-  // a detector lane → locker hallway → cafeteria double doors (satellite map)
+  // a detector lane → locker hallway → cafeteria double doors (site plan)
   seg(79, -5.2, 75.5, -3.6);
   seg(75.5, -3.6, 73.5, .5);
   seg(73.5, .5, 69.4, 7);
@@ -2582,7 +2565,7 @@ export function buildWorld(scene) {
   scene.fog = new THREE.Fog(0xbcd2e2, 70, 160);
   lights(scene);
   // ---- cafeteria block: built in its legacy local frame, then rotated 90 deg and
-  // moved SOUTH of the security block per the satellite map — the old east door
+  // moved SOUTH of the security block per the site plan — the old east door
   // wall now faces north into the locker hallway, and the old south window run
   // becomes the east building face at x=92 (windows onto the parking lot).
   const caf = new THREE.Group();
