@@ -107,8 +107,17 @@ the rug — no external assets. Data persists to `data/*.json`.
 
 ## Website & public hosting (simulator.rest)
 
-The server now serves a marketing landing page at `/` and the game itself at `/play`.
+The server serves a marketing landing page at `/` and the game itself at `/play`.
 Real screenshots for the landing page live in `public/img/`.
+
+**Production** ([simulator.rest](https://simulator.rest)) runs the bare-metal setup below:
+Cloudflare (proxied DNS) → nginx (Let's Encrypt TLS, websocket proxy, Cloudflare
+real-IP restore) → the Node server as the `breakroom` systemd service in
+`/opt/BreakRoomSimulator`. Deploying an update there:
+
+```bash
+ssh <server> 'cd /opt/BreakRoomSimulator && sudo git pull && sudo npm install --omit=dev && sudo systemctl restart breakroom'
+```
 
 ### One-command deploy (Docker + Caddy, automatic HTTPS)
 
