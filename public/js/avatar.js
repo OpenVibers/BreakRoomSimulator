@@ -210,10 +210,7 @@ export function makeAvatar(name, vest = 'yellow', guest = false, ap = null) {
   const tag = nameSprite(name, guest);
   tag.position.y = 2.25;
   g.add(tag);
-  const bubble = new THREE.Sprite(new THREE.SpriteMaterial({ depthTest: false, transparent: true, opacity: 0 }));
-  bubble.position.y = 2.62;
-  bubble.renderOrder = 6;
-  g.add(bubble);
+  const bubbles = []; // stacked chat bubbles above the head: {sp, age, life}
 
   // held item anchor rides in the right hand so items follow the arm swing
   const heldAnchor = new THREE.Group();
@@ -227,9 +224,8 @@ export function makeAvatar(name, vest = 'yellow', guest = false, ap = null) {
   g.add(shadow);
 
   const av = {
-    group: g, parts, tag, bubble, heldAnchor, shadow,
+    group: g, parts, tag, bubbles, heldAnchor, shadow,
     anim: 'idle', animT: Math.random() * 10, held: null, heldMesh: null, swingT: 0,
-    bubbleTimer: null,
     setVest(v) {
       const c = VEST_COLORS[v];
       parts.vest.visible = c !== null && c !== undefined;
@@ -269,17 +265,44 @@ export function makeAvatar(name, vest = 'yellow', guest = false, ap = null) {
         gg.fillStyle = '#1a2230'; gg.textAlign = 'center';
         lines.forEach((l, i) => gg.fillText(l, w / 2, h - bh + 8 + (i + .6) * lh));
       });
-      bubble.material.map?.dispose();
-      bubble.material.map = tex;
-      bubble.material.opacity = 1;
-      bubble.scale.set(2.2, .69, 1);
-      clearTimeout(av.bubbleTimer);
-      av.bubbleTimer = setTimeout(() => { bubble.material.opacity = 0; }, 5200);
+      // map is set at construction (a mapless SpriteMaterial compiles its
+      // shader untextured — assigning .map later rendered a blank white quad)
+      const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, opacity: 0 });
+      const sp = new THREE.Sprite(mat);
+      sp.center.set(.5, 0); // bottom-anchored so bubbles stack cleanly
+      sp.position.y = 2.42;
+      sp.renderOrder = 6;
+      sp.scale.set(1.1, .35, 1);
+      g.add(sp);
+      bubbles.push({ sp, age: 0, life: 6.4 });
+      // keep at most 3 on screen — the oldest fast-fades out
+      if (bubbles.length > 3) { const old = bubbles[0]; old.life = Math.min(old.life, old.age + .3); }
     },
     // smoothed pose blending: every joint eases toward its target so
     // idle↔walk↔run↔sit transitions flow instead of snapping
     pose: { legL: 0, legR: 0, armL: 0, armR: 0, armSpreadL: 0, armSpreadR: 0, torsoP: 0, torsoR: 0, headY: 0, headX: 0, liftL: 0, liftR: 0, bob: 0 },
     animate(dt) {
+      // chat bubbles: pop in with a little overshoot, stack upward, then
+      // drift up and fade away at end of life
+      for (let i = bubbles.length - 1; i >= 0; i--) {
+        const b = bubbles[i];
+        b.age += dt;
+        const back = bubbles.length - 1 - i;                 // 0 = newest
+        const ty = 2.42 + back * .56;
+        b.sp.position.y += (ty - b.sp.position.y) * Math.min(1, dt * 9);
+        const inK = Math.min(1, b.age / .22);
+        const pop = 1 + .22 * Math.sin(inK * Math.PI);
+        const outK = Math.max(0, (b.age - (b.life - .8)) / .8);
+        const s = (.5 + .5 * inK) * pop * (1 - .15 * outK);
+        b.sp.scale.set(2.2 * s, .69 * s, 1);
+        b.sp.material.opacity = Math.min(1, inK * 1.4) * (1 - outK);
+        if (outK > 0) b.sp.position.y += dt * .35;
+        if (b.age >= b.life) {
+          g.remove(b.sp);
+          b.sp.material.map?.dispose(); b.sp.material.dispose();
+          bubbles.splice(i, 1);
+        }
+      }
       const p = av.pose;
       const moving = av.anim === 'walk' || av.anim === 'run';
       const run = av.anim === 'run';
