@@ -533,7 +533,9 @@ function securityLobby(scene) {
     g.fillStyle = '#fff'; g.font = '900 34px Arial'; g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillText('STOP', w / 2, h / 2);
   }), transparent: true, depthWrite: false }));
-  stopFC.rotation.x = -Math.PI / 2; stopFC.position.set(63.9, .013, -9); stopFC.renderOrder = 1;
+  // read by associates walking east out of the FC arch toward the lanes
+  stopFC.rotation.x = -Math.PI / 2; stopFC.rotation.z = Math.atan2(-1, 0);
+  stopFC.position.set(63.9, .013, -9); stopFC.renderOrder = 1;
   scene.add(stopFC);
 
   // ---- SOUTH WALL (z=17): mural-faced wall with a plain OPENING into the locker
@@ -873,11 +875,19 @@ function securityLobby(scene) {
     g.beginPath(); g.moveTo(58, 68); g.lineTo(46, 84); g.lineTo(38, 94); g.stroke(); // back leg
   });
   W.anchors.walkDecalM = new THREE.MeshBasicMaterial({ map: walkTex, transparent: true, depthWrite: false });
-  for (const [dx, dz] of [[75.5, 2.5], [70, 4.2], [66, 10.5]]) {
-    const d = new THREE.Mesh(new THREE.PlaneGeometry(.6, .6), W.anchors.walkDecalM);
-    d.rotation.x = -Math.PI / 2; d.position.set(dx, .012, dz); d.renderOrder = 1;
-    scene.add(d);
-  }
+  // floor sticker aligned to a walking direction (hx,hz). alongU: the artwork
+  // points along texture-right (e.g. arrows) instead of texture-top.
+  W.anchors.floorDecal = (sc, mat, x, z, hx, hz, w = .6, hgt, alongU = false) => {
+    const d = new THREE.Mesh(new THREE.PlaneGeometry(w, hgt || w), mat);
+    d.rotation.x = -Math.PI / 2;
+    d.rotation.z = alongU ? Math.atan2(-hz, hx) : Math.atan2(-hx, -hz);
+    d.position.set(x, .012, z); d.renderOrder = 1;
+    sc.add(d);
+    return d;
+  };
+  // exit route: an evenly spaced row from the desk toward the badge-out gates
+  for (const [dx, dz] of [[73.4, 2.4], [75.9, 4.0], [78.4, 5.6]])
+    W.anchors.floorDecal(scene, W.anchors.walkDecalM, dx, dz, 2.5, 1.6);
   trash(scene, 70.8, 16.2, 0x6a6e73);
 
   hedgeGateWall(scene);
@@ -1100,23 +1110,11 @@ function entryLobby(scene) {
   }
   // traffic cone by the enter gates (pano)
   scene.add(cyl(.03, .18, .55, new THREE.MeshStandardMaterial({ color: 0xe06a1e, roughness: .6 }), 81.6, .28, -8.9, 10));
-  // floor decals: green walks on the Enter side, red no-entry on the exit side,
-  // dotted amazon-smile guide path down the middle
-  for (const [dx, dz] of [[82.5, -5.3], [85.5, -4.2], [88.5, -2.6]]) {
-    const d = new THREE.Mesh(new THREE.PlaneGeometry(.6, .6), W.anchors.walkDecalM);
-    d.rotation.x = -Math.PI / 2; d.position.set(dx, .012, dz); d.renderOrder = 1;
-    scene.add(d);
-  }
-  const noTex = TX.ct(96, 96, (g, w, h) => {
-    g.fillStyle = '#c22127'; g.beginPath(); g.arc(w / 2, h / 2, w * .46, 0, 7); g.fill();
-    g.fillStyle = '#fff'; g.fillRect(14, h / 2 - 7, w - 28, 14);
-  });
-  const noM = new THREE.MeshBasicMaterial({ map: noTex, transparent: true, depthWrite: false });
-  for (const [dx, dz] of [[82.5, 5.6], [85.5, 4.6]]) {
-    const d = new THREE.Mesh(new THREE.PlaneGeometry(.55, .55), noM);
-    d.rotation.x = -Math.PI / 2; d.position.set(dx, .012, dz); d.renderOrder = 1;
-    scene.add(d);
-  }
+  // floor guidance (Bug29): one coherent enter path from the front doors to the
+  // Enter lanes — alternating smile arrows and walk decals, evenly spaced and
+  // rotated to the direction of travel — plus a no-entry pair squarely at the
+  // mouth of the exit lanes.
+  const eDir = [-2.5, -1.4]; // door (≈90.5,-1) → enter lanes (≈81,-6.3)
   const smileTex = TX.ct(128, 64, (g, w, h) => {
     g.clearRect(0, 0, w, h);
     g.strokeStyle = '#f2a521'; g.lineWidth = 7; g.lineCap = 'round';
@@ -1124,12 +1122,17 @@ function entryLobby(scene) {
     g.beginPath(); g.moveTo(w - 30, 22); g.lineTo(w - 14, 30); g.lineTo(w - 30, 40); g.stroke();
   });
   const smileM = new THREE.MeshBasicMaterial({ map: smileTex, transparent: true, depthWrite: false });
-  for (let i = 0; i < 4; i++) {
-    const d = new THREE.Mesh(new THREE.PlaneGeometry(.8, .4), smileM);
-    d.rotation.x = -Math.PI / 2; d.rotation.z = -Math.PI / 2 + (i % 2 ? .15 : -.1);
-    d.position.set(83 + i * 2.4, .012, 3.4 - i * .5); d.renderOrder = 1;
-    scene.add(d);
-  }
+  const enterPath = [[90.2, -1.5], [88.0, -2.7], [85.8, -3.9], [83.6, -5.1]];
+  enterPath.forEach(([dx, dz], i) => {
+    if (i % 2 === 0) W.anchors.floorDecal(scene, smileM, dx, dz, eDir[0], eDir[1], .85, .42, true);
+    else W.anchors.floorDecal(scene, W.anchors.walkDecalM, dx, dz, eDir[0], eDir[1]);
+  });
+  const noTex = TX.ct(96, 96, (g, w, h) => {
+    g.fillStyle = '#c22127'; g.beginPath(); g.arc(w / 2, h / 2, w * .46, 0, 7); g.fill();
+    g.fillStyle = '#fff'; g.fillRect(14, h / 2 - 7, w - 28, 14);
+  });
+  const noM = new THREE.MeshBasicMaterial({ map: noTex, transparent: true, depthWrite: false });
+  for (const dz of [5.5, 7.3]) W.anchors.floorDecal(scene, noM, 82.4, dz, -1, 0, .55);
 
   // ---- glass storefront (x=92) with door bays + decals ----
   wallWithWindows(scene, { axis: 'x', at: 92, from: -17, to: 17, doorAt: 0, doorW: 5.2, tall: true });
@@ -2025,12 +2028,16 @@ function serviceHallway(scene) {
       g.beginPath(); g.moveTo(0, i * h / 4); g.lineTo(w, i * h / 4); g.stroke();
     }
   }, { repeat: [24, 2] });
-  scene.add(blocker(new (class extends THREE.Mesh {})(new THREE.PlaneGeometry(60, 5.4), new THREE.MeshStandardMaterial({ map: tile, roughness: .95, side: THREE.DoubleSide }))));
+  // one-sided (visible from below only) so the 3P camera riding at ceiling
+  // height doesn't catch the plane edge-on as a white wedge (Bug27)
+  scene.add(blocker(new (class extends THREE.Mesh {})(new THREE.PlaneGeometry(60, 5.4), new THREE.MeshStandardMaterial({ map: tile, roughness: .95 }))));
   const ceil = scene.children[scene.children.length - 1];
   ceil.rotation.x = Math.PI / 2; ceil.position.set(0, 3.15, -19.8);
-  // continuous center light strip (photo)
-  const lin = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: .95 });
-  scene.add(box(56, .06, .3, lin, 0, 3.05, -19.8));
+  tile.anisotropy = 8; // keep the grid readable at grazing camera angles (Bug27)
+  // segmented center light fixtures — a single 56 m emissive strip read as a
+  // giant white wedge when viewed edge-on just under the drop ceiling
+  const lin = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: .8 });
+  for (let i = -4; i <= 4; i++) scene.add(box(4.2, .05, .28, lin, i * 6.2, 3.08, -19.8));
 
   // ---- south side: microwave/coffee counter run (photo 205713252) ----
   const counter = new THREE.Group();
@@ -2050,7 +2057,7 @@ function serviceHallway(scene) {
     o.updateMatrix(); mws.setMatrixAt(i, o.matrix);
   }
   scene.add(mws);
-  inter({ id: 'hall-micro', type: 'micro', x: -14, z: -19, r: 6, label: 'Heat up lunch' });
+  inter({ id: 'hall-micro', type: 'micro', x: -14, z: -19, r: 2.6, label: 'Heat up lunch' });
   // coffee machine + cup rack (photo 205808782-style)
   scene.add(box(.55, .85, .5, new THREE.MeshStandardMaterial({ color: 0x17181c, roughness: .35 }), -27.3, 1.35, -17.9));
   scene.add(box(.3, .2, .02, new THREE.MeshStandardMaterial({ color: 0x2a72b8, roughness: .2, emissive: 0x1a4a80, emissiveIntensity: .4 }), -27.35, 1.55, -17.62));
@@ -2153,6 +2160,37 @@ function serviceHallway(scene) {
   broomG.position.set(-24.2, 0, -22);
   scene.add(broomG);
   inter({ id: 'pk-broom', type: 'pickup', x: -24.2, z: -21.6, r: 1.3, label: 'Pick up broom 🧹', data: { item: 'broom' } });
+
+  // ---- building fabric over/behind the hallway strip (the FC continues west):
+  // roof slab, upper wall bands to meet it, and a facade parapet so sightlines
+  // from the cafeteria hit building — not open sky (Bug27/28) ----
+  scene.add(blocker(box(68, .2, 5.6, M.ceiling, 4, 6.3, -19.8)));      // roof over strip
+  scene.add(box(60, 2.9, .25, M.white, 0, 4.85, -22.3));               // outer wall → roof
+  scene.add(box(.25, 2.9, 5.4, M.white, 30, 4.85, -19.8));             // end walls → roof
+  scene.add(box(.25, 2.9, 5.4, M.white, -30, 4.85, -19.8));
+  scene.add(box(76, 3.2, .25, M.white, 0, 7.9, -22.6));                // facade parapet band
+
+  // ---- lightwell courtyard behind the lounge-corner glass (was an unroofed
+  // void): concrete pad, planters, a tree and a rooftop-style mech unit ----
+  const cyPad = new THREE.Mesh(new THREE.PlaneGeometry(7.6, 5.1), new THREE.MeshStandardMaterial({ color: 0xa9adaf, roughness: .95 }));
+  cyPad.rotation.x = -Math.PI / 2; cyPad.position.set(-34, .004, -19.7);
+  scene.add(cyPad);
+  scene.add(blocker(box(8, 6.2, .3, M.wall, -34, 3.1, -22.45)));       // courtyard west wall
+  scene.add(blocker(box(.3, 6.2, 5.6, M.wall, -38, 3.1, -19.8)));      // courtyard south wall
+  collide(-34, -22.45, 8, .6); collide(-38, -19.8, .6, 5.6);
+  const plM = new THREE.MeshStandardMaterial({ color: 0x3a3d40, roughness: .85 });
+  const bushM = new THREE.MeshStandardMaterial({ color: 0x4c7a3d, roughness: .9 });
+  for (const [px, pz] of [[-36.6, -18.4], [-31.4, -21.2]]) {
+    scene.add(box(.9, .5, .9, plM, px, .25, pz));
+    const b = new THREE.Mesh(new THREE.SphereGeometry(.5, 9, 7), bushM);
+    b.position.set(px, .85, pz); b.scale.y = .85;
+    scene.add(b);
+  }
+  scene.add(cyl(.08, .11, 1.7, M.woodDark, -33.6, .85, -20.6, 8));
+  const cyFol = new THREE.Mesh(new THREE.SphereGeometry(1.0, 10, 8), bushM);
+  cyFol.position.set(-33.6, 2.5, -20.6); cyFol.scale.y = 1.3;
+  scene.add(cyFol);
+  scene.add(box(1.6, 1.1, .9, new THREE.MeshStandardMaterial({ color: 0x8c9296, roughness: .5, metalness: .4 }), -36.4, .55, -21.4));
 
   smokeCagePatio(scene);
 }
@@ -2520,13 +2558,9 @@ function floorPaths(scene) {
     g.fillText('STOP', w / 2, h / 2);
   });
   const stopM = new THREE.MeshBasicMaterial({ map: stopTex, transparent: true, depthWrite: false });
-  for (const [x, z] of [[77.1, 102], [77.1, 32.5], [69.4, 15.4], [74.8, 1.6]]) {
-    const s = new THREE.Mesh(new THREE.PlaneGeometry(.85, .85), stopM);
-    s.rotation.x = -Math.PI / 2;
-    s.position.set(x, .012, z);
-    s.renderOrder = 1;
-    scene.add(s);
-  }
+  // oriented so the text reads upright for the main (inbound, southbound) flow
+  for (const [x, z, hx, hz] of [[77.1, 102, 0, 1], [77.1, 32.5, 0, 1], [69.4, 15.4, 0, 1], [74.1, 2.6, -.53, .85]])
+    W.anchors.floorDecal(scene, stopM, x, z, hx, hz, .85);
 }
 
 function pickups(scene) {
