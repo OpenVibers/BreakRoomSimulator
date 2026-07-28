@@ -589,15 +589,30 @@ function start(token, user) {
   function dropItemInWorld(id, n = 1) {
     if (nearFire()) { burnItems(id, n); return; } // dropped into the barrel
     const fx = -Math.sin(my.yaw), fz = -Math.cos(my.yaw);
-    net.send({ t: 'drop', op: 'add', item: id, n, x: +(my.x + fx * 1.3).toFixed(2), y: .35, z: +(my.z + fz * 1.3).toFixed(2) });
+    // resolve against the walls so a drop can't land inside (or beyond) one
+    const [dx2, dz2] = resolveCollisions(my.x + fx * 1.3, my.z + fz * 1.3, .3);
+    net.send({ t: 'drop', op: 'add', item: id, n, x: +dx2.toFixed(2), y: .35, z: +dz2.toFixed(2) });
   }
   function addWorldDrop(d) {
     removeWorldDrop(d.id);
-    const mesh = buildHeldMesh(d.item);
-    if (!mesh) return;
+    const held = buildHeldMesh(d.item);
+    if (!held) return;
     const group = new THREE.Group();
-    mesh.scale.setScalar(1.4);
+    const mesh = new THREE.Group(); // spin/bob pivot
+    held.scale.setScalar(1.4);
+    mesh.add(held);
     group.add(mesh);
+    // held-item meshes are modeled around the hand grip — a broom extends a
+    // meter BELOW its origin, so dropped ones sank through the floor (or,
+    // lifted naively, hovered head-high). Lay tall items flat, then float
+    // the bounding box just above the ground.
+    let bb = new THREE.Box3().setFromObject(held);
+    if (bb.max.y - bb.min.y > .7) {
+      held.rotation.x = Math.PI / 2;
+      held.updateMatrixWorld(true);
+      bb = new THREE.Box3().setFromObject(held);
+    }
+    const lift = Math.max(.28, .16 - bb.min.y);
     const sh = new THREE.Mesh(new THREE.CircleGeometry(.16, 12), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: .2, depthWrite: false }));
     sh.rotation.x = -Math.PI / 2;
     sh.position.y = .012;
@@ -608,7 +623,7 @@ function start(token, user) {
     const def = ITEMS[d.item];
     const it = { id: `drop-${d.id}`, type: 'dropitem', x: d.x, z: d.z, r: 1.2, label: `Pick up ${def.icon} ${def.name}${d.n > 1 ? ' ×' + d.n : ''}`, data: { drop: d.id } };
     W.interactables.push(it);
-    worldDrops.set(d.id, { group, mesh, inter: it, t: Math.random() * 6, baseY: Math.max(.3, d.y || .35) });
+    worldDrops.set(d.id, { group, mesh, inter: it, t: Math.random() * 6, baseY: lift });
   }
   function removeWorldDrop(id) {
     const e = worldDrops.get(id);
@@ -1384,7 +1399,7 @@ function start(token, user) {
     // flashlight follows your view
     torch.intensity = my.held === 'flashlight' ? .5 + (1 - (W.dayFactor ?? 1)) * 3.6 : 0;
 
-    daylight.update(my.x, my.z);
+    daylight.update(dt, my.x, my.z);
     W.dynamic.fires?.forEach(f => f.update(dt));
 
     scanInteractables();

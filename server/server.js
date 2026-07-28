@@ -106,6 +106,9 @@ for (const [cid, c] of Object.entries(savedWorld.cars || {})) {
 let nextPhysId = [...props.keys()].reduce((m, id) => Math.max(m, Number(String(id).slice(2)) || 0), 0) + 1;
 // dropped items lying on the floor — minecraft style, persisted like all else
 const drops = new Map(Object.entries(savedWorld.drops || {})); // id -> {id, item, n, x, y, z}
+for (const [id, d] of drops) { // sweep anything that ever ended up outside the world
+  if (!Number.isFinite(d?.x) || !Number.isFinite(d?.z) || !(d.y >= 0 && d.y <= 8)) drops.delete(id);
+}
 let nextDropId = [...drops.keys()].reduce((m, id) => Math.max(m, Number(String(id).slice(1)) || 0), 0) + 1;
 // permanent marker tags — the "I was here" layer. They outlive everyone.
 const tags = Array.isArray(savedWorld.tags) ? savedWorld.tags : [];

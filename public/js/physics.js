@@ -148,8 +148,11 @@ export function initPhysics(scene) {
       mass: 180, material: carMat,
       angularDamping: .6, linearDamping: .12,
     });
-    body.addShape(new CANNON.Box(new CANNON.Vec3(hl, CAR_HH, hw)));
-    body.addShape(new CANNON.Box(new CANNON.Vec3(hl * .52, .24, hw * .86)), new CANNON.Vec3(0, CAR_HH + .2, -.1));
+    // cars are long along local Z (forward): width on x, LENGTH on z — the
+    // box used to be built the other way round, leaving the hitbox 90° across
+    // the car
+    body.addShape(new CANNON.Box(new CANNON.Vec3(hw, CAR_HH, hl)));
+    body.addShape(new CANNON.Box(new CANNON.Vec3(hw * .86, .24, hl * .52)), new CANNON.Vec3(0, CAR_HH + .2, -.2));
     body.position.set(car.x, CAR_HH + .05, car.z);
     body.quaternion.setFromEuler(0, car.ry, 0);
     body.sleepSpeedLimit = .35;

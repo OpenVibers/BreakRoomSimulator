@@ -79,7 +79,22 @@ export function initLighting(scene, renderer, shadows = true) {
   const sky = new THREE.Color();
   const smooth = (a, b, x) => { const k = Math.max(0, Math.min(1, (x - a) / (b - a))); return k * k * (3 - 2 * k); };
 
-  function update(px, pz) {
+  // the facility runs 24/7: when the player is inside, ambient light stays
+  // near daytime levels no matter the hour (Bug46/47 — interiors went black).
+  // Outside the windows it's still night: sun, sky, fog and stars are
+  // untouched by this.
+  const INDOORS = [
+    [58, 92, 31, 107],    // cafeteria / games / market
+    [62, 92, -17, 17],    // security lobby
+    [58, 92, 17, 31],     // locker hall
+    [52.5, 58, 39, 99],   // service hallway
+    [48, 53, 63, 82],     // bathrooms
+  ];
+  let indoorK = 0;
+
+  function update(dt, px, pz) {
+    const inside = INDOORS.some(([x0, x1, z0, z1]) => px >= x0 && px <= x1 && pz >= z0 && pz <= z1) ? 1 : 0;
+    indoorK += (inside - indoorK) * Math.min(1, (dt || .016) * 4);
     const t = timeOfDay();
     const elev = -Math.cos(t * Math.PI * 2);      // -1 midnight … +1 noon
     const az = t * Math.PI * 2;
@@ -99,10 +114,11 @@ export function initLighting(scene, renderer, shadows = true) {
     moon.position.set(px - Math.sin(az) * 70, Math.max(10, -elev * 80), pz - Math.cos(az) * 35);
     moon.target.position.set(px, 0, pz);
 
-    hemi.intensity = .3 + .75 * d;
-    hemi.color.copy(hemiNight).lerp(hemiDay, d);
-    hemi.groundColor.copy(gndNight).lerp(gndDay, d);
-    amb.intensity = .08 + .16 * d;
+    const dl = Math.max(d, indoorK * .82); // indoor light floor: fluorescents
+    hemi.intensity = .3 + .75 * dl;
+    hemi.color.copy(hemiNight).lerp(hemiDay, dl);
+    hemi.groundColor.copy(gndNight).lerp(gndDay, dl);
+    amb.intensity = .08 + .16 * dl;
 
     stars.material.opacity = (1 - d) * .95;
 
