@@ -1399,12 +1399,13 @@ function plant(scene, x, z) {
   const g = new THREE.Group();
   g.add(cyl(.26, .2, .4, new THREE.MeshStandardMaterial({ color: 0x8a5a3a, roughness: .8 }), 0, .2, 0, 12));
   const leafM = new THREE.MeshStandardMaterial({ color: 0x3f7d3a, roughness: .8, side: THREE.DoubleSide });
+  const leafGeo = new THREE.ConeGeometry(.09, 1.15, 5);
+  leafGeo.translate(0, .575, 0); // pivot at the base so tilting fans the tip, not the root
   for (let i = 0; i < 9; i++) {
-    const leaf = new THREE.Mesh(new THREE.ConeGeometry(.09, 1.15, 5), leafM);
+    const leaf = new THREE.Mesh(leafGeo, leafM);
     const a = i / 9 * Math.PI * 2;
-    leaf.position.set(Math.cos(a) * .12, .95, Math.sin(a) * .12);
-    leaf.rotation.z = Math.cos(a) * .8;
-    leaf.rotation.x = Math.sin(a) * .8;
+    leaf.position.set(Math.cos(a) * .07, .34, Math.sin(a) * .07);
+    leaf.setRotationFromAxisAngle(new THREE.Vector3(Math.sin(a), 0, -Math.cos(a)), i % 2 ? .55 : .28);
     g.add(leaf);
   }
   g.position.set(x, 0, z);
@@ -2336,8 +2337,8 @@ function exteriorEast(scene) {
     const a = new THREE.Group();
     for (const s2 of [-1, 1]) {
       const p = new THREE.Mesh(new THREE.PlaneGeometry(.85, 1.0), new THREE.MeshStandardMaterial({ map: toursTex, side: THREE.DoubleSide }));
-      p.rotation.x = s2 * .22;
-      p.position.z = s2 * .1;
+      p.rotation.x = -s2 * .22; // tops lean together into the A
+      p.position.z = s2 * .12;
       p.position.y = .5;
       a.add(p);
     }
@@ -2634,9 +2635,16 @@ function streets(scene) {
     const h = new THREE.Group();
     h.add(box(5, 2.7, 4.2, new THREE.MeshStandardMaterial({ color: cBody, roughness: .85 }), 0, 1.35, 0));
     const roofM = new THREE.MeshStandardMaterial({ color: cRoof, roughness: .9 });
-    const r1 = box(5.6, .14, 2.65, roofM, 0, 3.28, -1.05); r1.rotation.x = .42;
-    const r2 = box(5.6, .14, 2.65, roofM, 0, 3.28, 1.05); r2.rotation.x = -.42;
+    const r1 = box(5.6, .14, 2.65, roofM, 0, 3.28, -1.05); r1.rotation.x = -.42;
+    const r2 = box(5.6, .14, 2.65, roofM, 0, 3.28, 1.05); r2.rotation.x = .42;
     h.add(r1, r2);
+    const gable = new THREE.BufferGeometry(); // fill the triangular ends under the ridge
+    gable.setAttribute('position', new THREE.Float32BufferAttribute([
+      -2.5, 2.7, -2.1, -2.5, 2.7, 2.1, -2.5, 3.8, 0,
+      2.5, 2.7, 2.1, 2.5, 2.7, -2.1, 2.5, 3.8, 0,
+    ], 3));
+    gable.computeVertexNormals();
+    h.add(new THREE.Mesh(gable, new THREE.MeshStandardMaterial({ color: cBody, roughness: .85, side: THREE.DoubleSide })));
     h.add(box(.9, 1.9, .08, new THREE.MeshStandardMaterial({ color: 0x4a3626, roughness: .8 }), -1.1, .95, 2.12)); // door
     for (const wx of [.7, 1.7]) h.add(box(.9, .8, .06, new THREE.MeshStandardMaterial({ color: 0xbfd6e4, roughness: .25, metalness: .3 }), wx, 1.5, 2.12));
     if (isHome) {
