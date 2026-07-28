@@ -127,12 +127,104 @@ export function initPhysics(scene) {
     b.position.set(c.x0 + hw, 1.3, c.z0 + hd);
     world.addBody(b);
   }
-  const carBodies = (W.cars || []).map(car => {
-    const b = new CANNON.Body({ type: CANNON.Body.KINEMATIC, material: groundMat, shape: new CANNON.Box(new CANNON.Vec3(car.hl || 2.15, .6, car.hw || 1.0)) });
-    b.position.set(car.x, .6, car.z);
-    world.addBody(b);
-    return { car, b };
-  });
+  // cars are full rigid bodies: they roll, flip, get shoved, and can be
+  // physgunned around while nobody's driving — proper gmod energy
+  const CAR_HH = .5; // chassis half-height; visual group origin sits at the wheels
+  const carMat = new CANNON.Material('car');
+  // EXACTLY zero chassis-ground friction: the friction solver zeroes the
+  // tangential velocity of a heavy resting box under ANY nonzero μ (verified
+  // empirically — .04 behaved identically to .3). Cars roll on wheels anyway:
+  // grip and drag live in drive(), sliding decay in linearDamping.
+  world.addContactMaterial(new CANNON.ContactMaterial(groundMat, carMat, { friction: 0, restitution: .1 }));
+  world.addContactMaterial(new CANNON.ContactMaterial(propMat, carMat, { friction: .35, restitution: .3 }));
+  let myId = null;
+  const cars = new Map(); // id -> {id, car, body, isCar, owned, grabbedBy, remote, rp, rq, rv, remoteT}
+  for (const car of W.cars || []) {
+    const body = new CANNON.Body({
+      mass: 180, material: carMat,
+      shape: new CANNON.Box(new CANNON.Vec3(car.hl || 2.15, CAR_HH, car.hw || 1.0)),
+      angularDamping: .6, linearDamping: .12,
+    });
+    body.position.set(car.x, CAR_HH + .05, car.z);
+    body.quaternion.setFromEuler(0, car.ry, 0);
+    body.sleepSpeedLimit = .35;
+    body.sleepTimeLimit = .6;
+    body.sleep();
+    world.addBody(body);
+    cars.set(car.id, { id: car.id, car, body, isCar: true, owned: false, grabbedBy: null, remote: false });
+  }
+  const V = (x, y, z) => new CANNON.Vec3(x, y, z);
+
+  // arcade forces on a real chassis: engine + brake along the body's forward
+  // axis, hard-set yaw rate for snappy steering, lateral-grip kill, and a
+  // gentle self-righting torque so a flipped car can be driven back onto
+  // its wheels
+  function drive(e, throttle, steer, handbrake, dt) {
+    const b = e.body;
+    b.wakeUp();
+    const fwd = b.quaternion.vmult(V(0, 0, 1));
+    const right = b.quaternion.vmult(V(1, 0, 0));
+    const up = b.quaternion.vmult(V(0, 1, 0));
+    const grounded = up.y > .5 && b.position.y < CAR_HH + 1.1;
+    if (grounded) {
+      // velocity-space driving: the ground-contact friction solver eats applied
+      // forces on resting bodies, so we steer the velocity directly — the
+      // solver still owns collisions, gravity and rollovers
+      let vFwd = b.velocity.dot(fwd);
+      let vLat = b.velocity.dot(right);
+      const top = e.car.top || 17;
+      if (throttle > 0) vFwd += (e.car.acc || 9) * throttle * dt;
+      else if (throttle < 0) vFwd += (vFwd > .3 ? 14 : 5) * throttle * dt;
+      vFwd -= vFwd * (handbrake ? 2.2 : .45) * dt; // drag
+      vFwd = Math.max(-6, Math.min(top, vFwd));
+      vLat *= Math.pow(handbrake ? .6 : .02, dt);  // grip (handbrake = drift)
+      b.velocity.set(
+        fwd.x * vFwd + right.x * vLat,
+        b.velocity.y,
+        fwd.z * vFwd + right.z * vLat,
+      );
+      const sf = Math.min(Math.abs(vFwd) / 7, 1) * 1.9 * (vFwd < -.3 ? -1 : 1);
+      b.angularVelocity.y = steer * (handbrake ? 1.7 : 1) * sf;
+    }
+    if (up.y < .95) { // self-righting: torque toward world-up
+      const axis = up.cross(V(0, 1, 0));
+      b.angularVelocity.x += axis.x * 5 * dt;
+      b.angularVelocity.z += axis.z * 5 * dt;
+      if (up.y < -.9) b.angularVelocity.x += 3 * dt; // break the upside-down equilibrium
+    }
+  }
+
+  // remote authority for a car (driver stream or driverless nudge)
+  function applyCarState(m, snap = false) {
+    const e = cars.get(m.id);
+    if (!e) return;
+    e.owned = false;
+    e.rp = e.rp || new CANNON.Vec3();
+    e.rp.set(m.p[0], m.p[1], m.p[2]);
+    e.rq = e.rq || new CANNON.Quaternion();
+    e.rq.set(m.q[0], m.q[1], m.q[2], m.q[3]);
+    e.rv = Array.isArray(m.v) ? m.v : null;
+    e.remote = true;
+    e.remoteT = performance.now();
+    if (snap) {
+      e.body.position.copy(e.rp);
+      e.body.quaternion.copy(e.rq);
+      e.body.velocity.setZero();
+      e.body.angularVelocity.setZero();
+      e.remote = false;
+    }
+    e.body.wakeUp();
+  }
+
+  function sendCarState(e) {
+    const b = e.body;
+    net.send({
+      t: 'car', id: e.id, op: 'phys',
+      p: [+b.position.x.toFixed(2), +b.position.y.toFixed(2), +b.position.z.toFixed(2)],
+      q: [+b.quaternion.x.toFixed(3), +b.quaternion.y.toFixed(3), +b.quaternion.z.toFixed(3), +b.quaternion.w.toFixed(3)],
+      v: [+b.velocity.x.toFixed(2), +b.velocity.y.toFixed(2), +b.velocity.z.toFixed(2)],
+    });
+  }
 
   const props = new Map(); // id -> {id, kind, body, mesh, owned, netT, grabbedBy}
   let sendT = 0;
@@ -162,7 +254,12 @@ export function initPhysics(scene) {
     scene.remove(e.mesh);
     props.delete(id);
   }
-  function claim(e) { e.owned = true; e.body.wakeUp(); }
+  function claim(e) {
+    e.owned = true;
+    e.remote = false;
+    if (e.body.type === CANNON.Body.KINEMATIC) e.body.type = CANNON.Body.DYNAMIC;
+    e.body.wakeUp();
+  }
 
   // remote authority: someone else is driving this prop now
   function applyState(m) {
@@ -220,9 +317,54 @@ export function initPhysics(scene) {
   }
 
   function step(dt, playerPos) {
-    for (const { car, b } of carBodies) { b.position.set(car.x, .6, car.z); b.quaternion.setFromEuler(0, car.ry, 0); }
+    // remote-controlled cars follow their stream kinematically; when the
+    // stream dries up (driver left / nudger settled) they go dynamic again
+    for (const e of cars.values()) {
+      const drivenByMe = e.car.driver != null && e.car.driver === myId;
+      const remoteActive = e.remote && performance.now() - e.remoteT < 800;
+      if (!drivenByMe && e.rp && (remoteActive || (e.car.driver != null && e.remote))) {
+        if (e.body.type !== CANNON.Body.KINEMATIC) {
+          e.body.type = CANNON.Body.KINEMATIC;
+          e.body.velocity.setZero();
+          e.body.angularVelocity.setZero();
+        }
+        const k = Math.min(1, dt * 12);
+        e.body.position.lerp(e.rp, k, e.body.position);
+        e.body.quaternion.slerp(e.rq, k, e.body.quaternion);
+        e.body.wakeUp();
+      } else if (e.body.type === CANNON.Body.KINEMATIC) {
+        e.body.type = CANNON.Body.DYNAMIC;
+        if (e.rv) e.body.velocity.set(e.rv[0], e.rv[1], e.rv[2]);
+        e.remote = false;
+        e.body.wakeUp();
+      }
+    }
     if (playerPos) playerPush(playerPos.x, playerPos.y, playerPos.z, dt);
     world.step(1 / 60, dt, 3);
+    // cars: visual group, walking collider, and E-prompt follow the body
+    for (const e of cars.values()) {
+      const b = e.body, car = e.car;
+      if (b.position.y < -8 || b.position.x < -80 || b.position.x > 150 || b.position.z < -60 || b.position.z > 188) {
+        b.position.x = Math.max(-78, Math.min(148, b.position.x));
+        b.position.z = Math.max(-58, Math.min(186, b.position.z));
+        b.position.y = 1.2;
+        b.velocity.set(0, 0, 0);
+        b.angularVelocity.set(0, 0, 0);
+      }
+      const off = b.quaternion.vmult(V(0, CAR_HH, 0));
+      car.group.position.set(b.position.x - off.x, b.position.y - off.y, b.position.z - off.z);
+      car.group.quaternion.copy(b.quaternion);
+      const f = b.quaternion.vmult(V(0, 0, 1));
+      car.ry = Math.atan2(f.x, f.z);
+      car.x = b.position.x;
+      car.z = b.position.z;
+      const s = Math.abs(Math.sin(car.ry)), c = Math.abs(Math.cos(car.ry));
+      const hl = car.hl || 2.15, hw = car.hw || 1.0;
+      const ex = hl * s + hw * c, ez = hl * c + hw * s;
+      car.col.x0 = car.x - ex; car.col.x1 = car.x + ex;
+      car.col.z0 = car.z - ez; car.col.z1 = car.z + ez;
+      if (car.inter) { car.inter.x = car.x; car.inter.z = car.z; }
+    }
     for (const e of props.values()) {
       const b = e.body;
       // safety net: anything that tunnels the floor or escapes the map snaps back
@@ -236,29 +378,37 @@ export function initPhysics(scene) {
       e.mesh.position.copy(b.position);
       e.mesh.quaternion.copy(b.quaternion);
     }
-    // stream my awake props at ~12Hz
+    // stream my awake props + driverless cars I've been shoving, at ~12Hz
     sendT += dt;
     if (sendT > .085) {
       sendT = 0;
       for (const e of props.values()) {
         if (e.owned && e.body.sleepState !== CANNON.Body.SLEEPING) sendState(e);
       }
+      for (const e of cars.values()) {
+        if (e.owned && !e.car.driver && e.body.type === CANNON.Body.DYNAMIC && e.body.sleepState !== CANNON.Body.SLEEPING) sendCarState(e);
+      }
     }
   }
 
   function raycast(raycaster, maxDist = 14) {
-    const meshes = [...props.values()].map(e => e.mesh);
-    const hits = raycaster.intersectObjects(meshes, true);
+    const roots = [], entries = [];
+    for (const e of props.values()) { roots.push(e.mesh); entries.push(e); }
+    for (const e of cars.values()) if (!e.car.driver) { roots.push(e.car.group); entries.push(e); }
+    const hits = raycaster.intersectObjects(roots, true);
     for (const h of hits) {
       if (h.distance > maxDist) break;
       let o = h.object;
-      while (o && !meshes.includes(o)) o = o.parent;
+      while (o && !roots.includes(o)) o = o.parent;
       if (!o) continue;
-      const e = [...props.values()].find(x => x.mesh === o);
-      if (e) return { e, point: h.point, distance: h.distance };
+      return { e: entries[roots.indexOf(o)], point: h.point, distance: h.distance };
     }
     return null;
   }
 
-  return { world, props, add, remove, claim, applyState, sendState, step, smack, raycast, PHYS_KINDS };
+  return {
+    world, props, cars, add, remove, claim, applyState, applyCarState, sendState, sendCarState,
+    drive, step, smack, raycast, PHYS_KINDS,
+    setMyId(id) { myId = id; },
+  };
 }

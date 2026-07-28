@@ -137,3 +137,9 @@ body.touch #hotbar { bottom: calc(96px + env(safe-area-inset-bottom)); }
 #spawn-grid button { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); border-radius: 10px; color: #dfe7f0; padding: 10px 6px; cursor: pointer; font-size: .78rem; font-family: inherit; }
 #spawn-grid button:hover { background: rgba(53,224,255,.14); border-color: #35e0ff; }
 #spawn-grid .ico { font-size: 1.5rem; display: block; margin-bottom: 4px; }
+
+/* ---------- permanent marker form (G) ---------- */
+#tag-form { position: absolute; bottom: 140px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; align-items: center; background: rgba(12,16,22,.92); border: 1px solid rgba(255,211,77,.35); border-radius: 12px; padding: 10px 16px; z-index: 25; box-shadow: 0 8px 30px rgba(0,0,0,.45); }
+#tag-form .tag-pen { font-size: 1.2rem; }
+#tag-form input { background: transparent; border: none; outline: none; color: #ffd34d; font-family: inherit; font-size: 1rem; width: 340px; font-style: italic; }
+#tag-form input::placeholder { color: rgba(255,211,77,.45); }

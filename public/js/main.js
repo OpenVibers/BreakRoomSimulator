@@ -91,60 +91,60 @@ function start(token, user) {
   const phys = initPhysics(scene); // sandbox physics: dynamic props + physgun
   let editor = null;
 
-  // ---------- drivable cars (arcade vehicle physics) ----------
-  const carState = { driving: null, speed: 0 }; // driving = W.cars entry
+  // ---------- drivable cars (rigid-body vehicles — they roll and flip) ----------
+  const carState = { driving: null }; // driving = W.cars entry
   let carSendT = 0;
-  // keep a car's visuals, heading-aware collider and E-interact spot in sync
-  // with wherever it actually is (they used to stay at the parking spot)
-  function syncCar(car) {
-    car.group.position.set(car.x, 0, car.z);
-    car.group.rotation.y = car.ry;
-    const s = Math.abs(Math.sin(car.ry)), c = Math.abs(Math.cos(car.ry));
-    const hl = car.hl || 2.15, hw = car.hw || 1.0;
-    const ex = hl * s + hw * c, ez = hl * c + hw * s;
-    car.col.x0 = car.x - ex; car.col.x1 = car.x + ex;
-    car.col.z0 = car.z - ez; car.col.z1 = car.z + ez;
-    if (car.inter) { car.inter.x = car.x; car.inter.z = car.z; }
-  }
   function enterCar(car) {
     if (car.driver && car.driver !== myId) { toast('🚗 Someone is already driving that one.'); return; }
+    const e = phys.cars.get(car.id);
+    if (pgState.held === e) physgunRelease(false);
     carState.driving = car;
-    carState.speed = 0;
     car.col.off = true;
     car.driver = myId;
+    phys.claim(e);
     net.send({ t: 'car', id: car.id, op: 'enter' });
     toast('🚗 W/S throttle · A/D steer · Space handbrake · E to get out');
   }
   function exitCar() {
     const car = carState.driving;
     if (!car) return;
+    const e = phys.cars.get(car.id);
     carState.driving = null;
     car.col.off = false;
     car.driver = null;
+    e.owned = true; // keep streaming while it rolls to a stop
     // step out beside the driver door
-    my.x = car.x + Math.cos(car.ry) * 1.6;
-    my.z = car.z - Math.sin(car.ry) * 1.6;
+    my.x = car.x + Math.cos(car.ry) * 1.7;
+    my.z = car.z - Math.sin(car.ry) * 1.7;
     my.vel.x = 0; my.vel.z = 0;
-    syncCar(car);
+    my.y = 0; my.vy = 0;
     net.send({ t: 'car', id: car.id, op: 'exit' });
     sendPos(true);
   }
   net.on('car', (m) => {
     const car = W.cars?.find(c => c.id === m.id);
-    if (!car) return;
+    const e = phys.cars.get(m.id);
+    if (!car || !e) return;
     if (m.op === 'enter') {
       car.driver = m.driver;
-      if (m.driver !== myId) car.col.off = true;
+      if (m.driver !== myId) { car.col.off = true; e.owned = false; }
+      e.grabbedBy = null;
+      if (pgState.held === e) physgunRelease(false);
     } else if (m.op === 'exit') {
       car.driver = null;
       car.col.off = false;
-      if (Number.isFinite(m.x)) { car.x = m.x; car.z = m.z; car.ry = m.ry; }
-      syncCar(car);
-      if (Number.isFinite(m.x)) { car.x = m.x; car.z = m.z; car.ry = m.ry; }
-    } else if (m.op === 'state' && m.driver !== myId) {
+      if (Array.isArray(m.p)) phys.applyCarState({ id: m.id, p: m.p, q: m.q, v: null }, true);
+    } else if (m.op === 'state') {
+      if (m.driver === myId) return;
       car.driver = m.driver;
-      car.tx = m.x; car.tz = m.z; car.try = m.ry; // lerp targets
-    }
+      phys.applyCarState(m);
+    } else if (m.op === 'phys') {
+      if (m.owner === myId) return;
+      phys.applyCarState(m);
+    } else if (m.op === 'grab') {
+      e.grabbedBy = m.by;
+      e.owned = false;
+    } else if (m.op === 'drop') e.grabbedBy = null;
   });
 
   // ---------- badge gates ----------
@@ -194,6 +194,7 @@ function start(token, user) {
       myAvatar.setHeld(item);
       net.send({ t: 'held', item });
       updateViewmodel();
+      if (item === 'physgun') toast('🧲 Hold left-click on a prop or empty car to grab · wheel push/pull · R spin · X delete · Q spawns props', 4600);
     },
     onWear: (def) => {
       if (def.ap) { me.ap = { ...(me.ap || {}), ...def.ap }; rebuildMyAvatar(); net.send({ t: 'appear', ap: me.ap }); }
@@ -347,7 +348,8 @@ function start(token, user) {
     } else if (e.code === 'KeyV') setFP(!fp);
     else if (e.code === 'KeyF') useKey();
     else if (e.code === 'KeyQ') toggleSpawn();
-    else if (e.code === 'KeyX' && pgState.held) net.send({ t: 'prop', op: 'del', id: pgState.held.id });
+    else if (e.code === 'KeyG') { e.preventDefault(); openTag(); }
+    else if (e.code === 'KeyX' && pgState.held && !pgState.held.isCar) net.send({ t: 'prop', op: 'del', id: pgState.held.id });
   });
 
   // ---------- chat ----------
@@ -382,7 +384,7 @@ function start(token, user) {
   }
   addEventListener('keydown', (e) => {
     if (e.code === 'Enter' && !input.chatOpen && !mg.inArcade() && started) { openChat(); e.preventDefault(); }
-    else if (e.code === 'Escape' && input.chatOpen) closeChat();
+    else if (e.code === 'Escape' && input.chatOpen) { if (tagOpen) closeTag(); else closeChat(); }
     else if (e.code === 'Escape' && started) {
       // Escape closes the top UI panel (spawn/inventory/settings) like any game menu
       if (spawnOpen) toggleSpawn(false);
@@ -395,12 +397,13 @@ function start(token, user) {
   // ---------- net handlers ----------
   net.on('init', (m) => {
     myId = m.id;
+    phys.setMyId(m.id);
     my.x = m.you.x; my.y = m.you.y; my.z = m.you.z; my.ry = m.you.ry;
     mg.applyInit(m);
     for (const [cid, c] of Object.entries(m.cars || {})) {
       const car = W.cars?.find(k => k.id === cid);
       if (!car) continue;
-      if (Number.isFinite(c.x)) { car.x = c.x; car.z = c.z; car.ry = c.ry; syncCar(car); }
+      if (Array.isArray(c.p)) phys.applyCarState({ id: cid, p: c.p, q: c.q || [0, 0, 0, 1], v: null }, true);
       car.driver = c.driver;
       if (c.driver) car.col.off = true;
     }
@@ -409,6 +412,37 @@ function start(token, user) {
     (m.mapEdits || []).forEach(p => props.add(p));
     (m.sleepers || []).forEach(addSleeper);
     (m.props || []).forEach(pr => phys.add(pr));
+    (m.tags || []).forEach(addMark);
+    // retro associate counter by the front walkway — proof the place remembers
+    if (m.visitorNum) {
+      const pad6 = (v) => String(Math.min(v, 999999)).padStart(6, '0');
+      const signTex = ct(512, 224, (g, w, h) => {
+        g.fillStyle = '#101418'; g.fillRect(0, 0, w, h);
+        g.strokeStyle = '#2c343e'; g.lineWidth = 8; g.strokeRect(4, 4, w - 8, h - 8);
+        g.textAlign = 'center';
+        g.fillStyle = '#8fa0b3'; g.font = '700 30px "Segoe UI", sans-serif';
+        g.fillText('YOU ARE ASSOCIATE', w / 2, 52);
+        g.fillStyle = '#ffb52e'; g.font = '700 84px "Consolas", monospace';
+        g.shadowColor = '#ffb52e'; g.shadowBlur = 18;
+        g.fillText('Nº ' + pad6(m.visitorNum), w / 2, 138);
+        g.shadowBlur = 0;
+        g.fillStyle = '#5d6b7a'; g.font = '24px "Consolas", monospace';
+        g.fillText(`naps: ${m.stats?.naps ?? 0} · marks: ${m.stats?.marks ?? 0} · the lights stay on`, w / 2, 190);
+      });
+      const sg = new THREE.Group();
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(.05, .05, 2.0, 8), new THREE.MeshStandardMaterial({ color: 0x2a2f36, roughness: .6 }));
+      post.position.y = 1.0;
+      sg.add(post);
+      const panel = new THREE.Mesh(new THREE.PlaneGeometry(2.3, 1.0), new THREE.MeshBasicMaterial({ map: signTex }));
+      panel.position.y = 2.1;
+      sg.add(panel);
+      sg.position.set(103, 0, 6.4);
+      sg.rotation.y = Math.PI;
+      scene.add(sg);
+      W.colliders.push({ x0: 102.7, x1: 103.3, z0: 6.1, z1: 6.7 });
+      addChat(`📟 You are associate №${m.visitorNum}. The break room remembers everyone.`, 'sys');
+      addChat('🖊️ Press G to leave a permanent mark · Q to spawn props · the 🧲 is out on 172nd St.', 'sys');
+    }
     if (me.admin && !editor) editor = initEditor({ scene, camera, props, toast });
     $('online-count').textContent = m.online;
     for (const p of m.players) addOther(p);
@@ -523,6 +557,57 @@ function start(token, user) {
   net.on('sleep', (m) => addSleeper(m.s));
   net.on('wake', (m) => removeSleeper(m.key));
 
+  // ---------- permanent marks (G): sharpie on the floor, forever ----------
+  const tagGroup = new THREE.Group();
+  scene.add(tagGroup);
+  function addMark(tg) {
+    const n = parseInt(String(tg.id).slice(1), 10) || 0;
+    const tex = ct(256, 96, (g, w) => {
+      let f = 30;
+      const setF = () => { g.font = `italic 700 ${f}px "Segoe Print", "Comic Sans MS", cursive`; };
+      setF();
+      while (g.measureText(tg.text).width > w - 14 && f > 13) { f -= 2; setF(); }
+      g.fillStyle = `hsla(${tg.hue}, 70%, 30%, .95)`; // dark enough to read on pale floors
+      g.textAlign = 'center';
+      g.fillText(tg.text, w / 2, 46);
+      g.font = 'italic 15px "Segoe UI", sans-serif';
+      g.fillStyle = 'rgba(20,26,34,.6)';
+      g.fillText('— ' + tg.name, w / 2, 76);
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.7, .64), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+    mesh.rotation.x = -Math.PI / 2;
+    // readable from where the writer stood, with a little hand-drawn wobble
+    mesh.rotation.z = (tg.ry || 0) + Math.PI + ((n % 5) - 2) * .12;
+    mesh.position.set(tg.x, .022 + (n % 7) * .0014, tg.z); // stacked ink never z-fights
+    mesh.renderOrder = 2;
+    tagGroup.add(mesh);
+  }
+  net.on('tag', (m) => { if (m.op === 'add') addMark(m.tag); });
+
+  const tagForm = $('tag-form'), tagInput = $('tag-input');
+  let tagOpen = false;
+  function openTag() {
+    if (tagOpen || carState.driving) return;
+    tagOpen = true;
+    input.chatOpen = true; // reuse the "typing" suppression of game keys
+    tagForm.classList.remove('hidden');
+    tagInput.focus();
+  }
+  function closeTag() {
+    tagOpen = false;
+    input.chatOpen = false;
+    tagForm.classList.add('hidden');
+    tagInput.blur();
+    canvas.focus?.();
+  }
+  tagForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const text = tagInput.value.trim();
+    if (text) net.send({ t: 'tag', text, x: my.x, z: my.z, ry: my.ry });
+    tagInput.value = '';
+    closeTag();
+  });
+
   // ---------- sandbox: spawn menu (Q) ----------
   const spawnEl = $('spawn-menu'), spawnGrid = $('spawn-grid');
   for (const [kind, def] of Object.entries(PHYS_KINDS)) {
@@ -544,7 +629,7 @@ function start(token, user) {
   }
 
   // ---------- physgun: hold LMB to grab · wheel push/pull · R spin · X delete ----------
-  const pgState = { held: null, dist: 0 };
+  const pgState = { held: null, dist: 0, lmb: false, missT: 0 };
   const pgRay = new THREE.Raycaster();
   function pgEquipped() { return my.held === 'physgun'; }
   function physgunGrab() {
@@ -553,11 +638,11 @@ function start(token, user) {
     const hit = phys.raycast(pgRay, 14);
     if (!hit) return;
     pgState.held = hit.e;
-    pgState.dist = Math.max(1.6, Math.min(10, hit.distance));
+    pgState.dist = Math.max(1.6, Math.min(hit.e.isCar ? 12 : 10, hit.distance));
     hit.e.grabbedBy = myId;
     phys.claim(hit.e);
     hit.e.body.angularDamping = .92;
-    net.send({ t: 'prop', op: 'grab', id: hit.e.id });
+    net.send({ t: hit.e.isCar ? 'car' : 'prop', op: 'grab', id: hit.e.id });
     beep(880, .06, 'square', .05);
   }
   function physgunRelease(throwIt = true) {
@@ -565,16 +650,24 @@ function start(token, user) {
     if (!e) return;
     pgState.held = null;
     e.grabbedBy = null;
-    e.body.angularDamping = .35;
-    net.send({ t: 'prop', op: 'drop', id: e.id });
-    if (throwIt) phys.sendState(e); // carries the fling velocity
+    e.body.angularDamping = e.isCar ? .6 : .35;
+    net.send({ t: e.isCar ? 'car' : 'prop', op: 'drop', id: e.id });
+    if (throwIt) (e.isCar ? phys.sendCarState : phys.sendState)(e); // carries the fling velocity
     beep(440, .05, 'square', .04);
   }
   addEventListener('mousedown', (e) => {
     if (e.button !== 0 || !input.locked || input.uiOpen || input.chatOpen) return;
-    if (pgEquipped()) physgunGrab();
+    if (pgEquipped()) {
+      pgState.lmb = true;
+      physgunGrab();
+      if (!pgState.held) beep(220, .05, 'square', .04); // dry-fire click
+    }
   });
-  addEventListener('mouseup', (e) => { if (e.button === 0 && pgState.held) physgunRelease(); });
+  addEventListener('mouseup', (e) => {
+    if (e.button !== 0) return;
+    pgState.lmb = false;
+    if (pgState.held) physgunRelease();
+  });
 
   // beams: one for me, plus one per prop another player is holding
   function glowDot() {
@@ -612,26 +705,49 @@ function start(token, user) {
     pos.needsUpdate = true;
     b.dot.position.copy(to);
   }
+  function myBeamFrom() {
+    if (fp) {
+      const dir = camera.getWorldDirection(beamV.set(0, 0, 0));
+      const from = camera.position.clone().addScaledVector(dir, .5);
+      from.y -= .18;
+      return from;
+    }
+    return myAvatar.heldAnchor.getWorldPosition(new THREE.Vector3());
+  }
   function updateBeams() {
     const live = new Set();
     if (pgState.held) {
       live.add('me');
-      let from;
-      if (fp) {
-        const dir = camera.getWorldDirection(beamV.set(0, 0, 0));
-        from = camera.position.clone().addScaledVector(dir, .5);
-        from.y -= .18;
-      } else {
-        from = myAvatar.heldAnchor.getWorldPosition(new THREE.Vector3());
+      setBeam('me', myBeamFrom(), pgState.held.body.position);
+      beamFor('me').line.material.opacity = .8;
+    } else if (pgState.lmb && pgEquipped()) {
+      // gmod-style: the beam fires even with nothing grabbed, ending on
+      // whatever the crosshair touches (dimmer — it isn't holding anything)
+      live.add('me');
+      pgRay.setFromCamera(new THREE.Vector2(0, 0), camera);
+      pgRay.far = 20;
+      let end = null;
+      const hit = phys.raycast(pgRay, 20);
+      if (hit) end = hit.point;
+      else {
+        const wallHits = pgRay.intersectObjects(W.camBlockers, false);
+        if (wallHits.length) end = wallHits[0].point;
+        else if (pgRay.ray.direction.y < -.001) { // floor
+          const t = -pgRay.ray.origin.y / pgRay.ray.direction.y;
+          if (t > 0 && t < 20) end = pgRay.ray.origin.clone().addScaledVector(pgRay.ray.direction, t);
+        }
+        if (!end) end = pgRay.ray.origin.clone().addScaledVector(pgRay.ray.direction, 20);
       }
-      setBeam('me', from, pgState.held.body.position);
+      setBeam('me', myBeamFrom(), end);
+      beamFor('me').line.material.opacity = .3;
     }
-    for (const e of phys.props.values()) {
+    for (const e of [...phys.props.values(), ...phys.cars.values()]) {
       if (e.grabbedBy && e.grabbedBy !== myId) {
         const o = others.get(e.grabbedBy);
         if (!o) continue;
         live.add(e.id);
         setBeam(e.id, o.avatar.heldAnchor.getWorldPosition(beamV), e.body.position);
+        beamFor(e.id).line.material.opacity = .8;
       }
     }
     for (const [key, b] of beams) {
@@ -908,35 +1024,26 @@ function start(token, user) {
     }
 
     if (carState.driving) {
-      // ---- arcade car physics: throttle, speed-scaled steering, drift, crash ----
+      // ---- rigid-body driving: forces on the chassis, physics handles the rest ----
       const car = carState.driving;
-      const throttle = -kv.y;                       // W forward, S reverse/brake
-      const steer = -kv.x;
-      const handbrake = input.keys.Space;
-      const maxF = car.top || 17, maxR = 6;
-      if (throttle > 0) carState.speed += (car.acc || 9) * throttle * dt;
-      else if (throttle < 0) carState.speed += (carState.speed > 0 ? 14 : 5) * throttle * dt;
-      carState.speed -= carState.speed * (handbrake ? 2.4 : .5) * dt; // drag
-      carState.speed = Math.max(-maxR, Math.min(maxF, carState.speed));
-      if (Math.abs(carState.speed) > .2) {
-        const grip = handbrake ? 1.7 : 1.0;
-        car.ry += steer * grip * Math.min(Math.abs(carState.speed) / 7, 1) * 1.9 * dt * Math.sign(carState.speed);
-      }
-      let cx2 = car.x + Math.sin(car.ry) * carState.speed * dt;
-      let cz2 = car.z + Math.cos(car.ry) * carState.speed * dt;
-      const [rx, rz] = resolveCollisions(cx2, cz2, 1.25);
-      if (Math.hypot(rx - cx2, rz - cz2) > .01) { // crash
-        if (Math.abs(carState.speed) > 5) beep(90, .2, 'sawtooth', .2);
-        carState.speed *= .35;
-      }
-      car.x = rx; car.z = rz;
-      syncCar(car);
-      // player rides in the seat; engine hum
-      my.x = car.x; my.z = car.z; my.y = .45; my.ry = car.ry;
+      const e = phys.cars.get(car.id);
+      phys.drive(e, -kv.y, -kv.x, !!input.keys.Space, dt);
+      // ride the chassis (car.x/z/ry are synced from the body in phys.step)
+      my.x = car.x; my.z = car.z;
+      my.y = Math.max(0, e.body.position.y - .15);
+      my.ry = car.ry;
       my.anim = 'sit';
       carSendT += dt;
-      if (carSendT > .1) { carSendT = 0; net.send({ t: 'car', id: car.id, op: 'state', x: +car.x.toFixed(2), z: +car.z.toFixed(2), ry: +car.ry.toFixed(3) }); }
-      if (input.actionQueued2) {} // noop
+      if (carSendT > .1) {
+        carSendT = 0;
+        const b = e.body;
+        net.send({
+          t: 'car', id: car.id, op: 'state',
+          p: [+b.position.x.toFixed(2), +b.position.y.toFixed(2), +b.position.z.toFixed(2)],
+          q: [+b.quaternion.x.toFixed(3), +b.quaternion.y.toFixed(3), +b.quaternion.z.toFixed(3), +b.quaternion.w.toFixed(3)],
+          v: [+b.velocity.x.toFixed(2), +b.velocity.y.toFixed(2), +b.velocity.z.toFixed(2)],
+        });
+      }
     } else if (my.seat) {
       if (mvLen > .4) standUp();
       my.anim = 'sit';
@@ -1069,17 +1176,6 @@ function start(token, user) {
       camera.lookAt(my.x, my.y + 1.45, my.z);
     }
 
-    // remote-driven cars interpolate toward their latest state
-    if (W.cars) for (const car of W.cars) {
-      if (car.driver && car.driver !== myId && car.tx !== undefined) {
-        car.x += (car.tx - car.x) * Math.min(1, dt * 10);
-        car.z += (car.tz - car.z) * Math.min(1, dt * 10);
-        let cdr = (car.try - car.ry + Math.PI * 3) % (Math.PI * 2) - Math.PI;
-        car.ry += cdr * Math.min(1, dt * 10);
-        syncCar(car);
-      }
-    }
-
     // badge-gate paddle animation
     if (W.gates) for (const g of W.gates) {
       const target = g.open ? 1.15 : 0;
@@ -1090,7 +1186,7 @@ function start(token, user) {
     // ---- sandbox physics ----
     if (pgState.held) {
       const held = pgState.held;
-      if (!pgEquipped() || !phys.props.has(held.id)) physgunRelease(false);
+      if (!pgEquipped() || !(held.isCar ? phys.cars : phys.props).has(held.id)) physgunRelease(false);
       else { // drag the grabbed prop toward the point pgState.dist along the view ray
         const b = held.body;
         b.wakeUp();
@@ -1128,7 +1224,7 @@ function start(token, user) {
 
   // debug/testing handle
   window.__brs = {
-    my, mg, scene, W, phys, teleport: (x, z, yaw) => { my.x = x; my.z = z; if (yaw !== undefined) my.yaw = yaw; sendPos(true); },
+    my, mg, scene, W, phys, input, teleport: (x, z, yaw) => { my.x = x; my.z = z; if (yaw !== undefined) my.yaw = yaw; sendPos(true); },
     action: doAction, nearest: () => nearest?.id || nearestSeat?.id || null,
     spawnProp, toggleSpawn, physgunGrab, physgunRelease, pgState, sleepers: sleeperMap, inv: invApi,
   };

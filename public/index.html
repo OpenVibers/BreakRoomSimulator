@@ -149,14 +149,16 @@
   <div class="wrap">
     <div class="emoji"><span>🏓</span> <span>🦺</span> <span>♟️</span> <span>🚗</span></div>
     <h1>Amazon Break Room<span class="accent">SIMULATOR</span></h1>
-    <p class="sub">Your 15 minutes start now. A free, open-source multiplayer 3D world rebuilt from a
-      real fulfillment center — badge through security, hit the lockers, and meet everyone in the
-      break room for ping pong, giant Connect&nbsp;4, chess and arcade highscores.</p>
+    <p class="sub">A lost corner of the internet shaped like a fulfillment-center break room.
+      The fluorescent lights never turn off, the break never ends, and <em>nothing here resets</em> —
+      leave the tab and your associate curls up for a nap right where you stood. Marker on the floor,
+      boxes in the parking lot, a car on its roof: it's all still there tomorrow.</p>
     <div class="cta-row">
-      <a class="btn" href="/play">▶ &nbsp;Play now — free, in your browser</a>
+      <a class="btn" href="/play">▶ &nbsp;Clock in — free, in your browser</a>
       <a class="btn ghost" href="https://github.com/OpenVibers/BreakRoomSimulator" target="_blank" rel="noopener">⭐ Star on GitHub</a>
     </div>
     <p class="note">No download. No install. Works on desktop, phone and tablet. Guest login in one click.</p>
+    <p class="note" id="hit-counter" style="font-family: ui-monospace, monospace; letter-spacing: .12em; color: #ffb52e;"></p>
     <div class="shot" id="heroShot"><img src="/img/lp-security.png" alt="The PAE2 security lobby with the front desk island and metal detectors"></div>
   </div>
 </div>
@@ -171,7 +173,10 @@
       <div class="card rv"><div class="ic">🌐</div><h3>Realtime multiplayer</h3><p>Everyone shares one world over websockets — chat, emotes, and other players walking, driving and playing live around you.</p></div>
       <div class="card rv"><div class="ic">🏓</div><h3>Playable minigames</h3><p>Ping pong duels, giant Connect 4, full chess, and the PRIME BREAKER arcade cabinet with global highscores.</p></div>
       <div class="card rv"><div class="ic">🗺️</div><h3>True-to-life map</h3><p>Parking lot, badge gates, PAE2 security desk, locker hallway, avenue&nbsp;C market, dining hall, couch corner and the smoke cage.</p></div>
-      <div class="card rv"><div class="ic">🚗</div><h3>Drivable cars</h3><p>Every car in the parking lot starts. Arcade handling, handbrake slides, synced across players.</p></div>
+      <div class="card rv"><div class="ic">🚗</div><h3>Real physics cars</h3><p>Every car is a rigid body — handbrake slides, rolls, full flips. Park it on its roof and it stays that way for the next visitor.</p></div>
+      <div class="card rv"><div class="ic">🧲</div><h3>Physgun sandbox</h3><p>Find the gravity tool abandoned on 172nd St, spawn boxes and watermelons, and rearrange the world gmod-style. Everything you move stays moved.</p></div>
+      <div class="card rv"><div class="ic">💤</div><h3>Nobody ever leaves</h3><p>Log off and your associate naps on the floor exactly where you stood — until you come back and pick up mid-break. The world remembers.</p></div>
+      <div class="card rv"><div class="ic">🖊️</div><h3>Leave your mark</h3><p>Press G and write on the floor in permanent marker. Your words (and your name) stay in the break room forever.</p></div>
       <div class="card rv"><div class="ic">🎒</div><h3>Items &amp; loadout</h3><p>24-slot inventory and hotbar with drag &amp; drop — snacks, hats, vests, and break-room "weapons" like paddles and bananas.</p></div>
       <div class="card rv"><div class="ic">🕹️</div><h3>Source-style movement</h3><p>First or third person, air-strafing, bunny hops, crouch-sneaking — movement that feels like the classics.</p></div>
       <div class="card rv"><div class="ic">🧍</div><h3>Character customization</h3><p>Skin, shirt, hair and hats — plus the mandatory hi-vis vest if you want to look like you belong.</p></div>
@@ -204,6 +209,9 @@
       <tr><td><kbd>Ctrl</kbd></td><td>Crouch / sneak</td></tr>
       <tr><td><kbd>1</kbd>–<kbd>6</kbd> / scroll</td><td>Hotbar — equip paddles, snacks and other items</td></tr>
       <tr><td><kbd>F</kbd> / click</td><td>Use item / swing</td></tr>
+      <tr><td><kbd>Q</kbd></td><td>Spawn menu — boxes, crates, kickballs, watermelons</td></tr>
+      <tr><td><kbd>G</kbd></td><td>Permanent marker — write on the floor, forever</td></tr>
+      <tr><td>Hold click 🧲</td><td>Physgun (find it on 172nd St) — grab props and empty cars, scroll to push/pull, <kbd>X</kbd> deletes</td></tr>
       <tr><td>Scroll in</td><td>First-person mode (scroll out or 📷 to leave)</td></tr>
       <tr><td>📱 Touch</td><td>Virtual joystick + buttons appear automatically on mobile</td></tr>
     </table>
@@ -323,5 +331,13 @@
 })();
 </script>
 
+<script>
+// retro hit counter — the front porch of a lost corner of the internet
+fetch('/api/stats').then(r => r.json()).then(s => {
+  const pad = n => String(n).padStart(6, '0');
+  document.getElementById('hit-counter').textContent =
+    `▓ visitor ${pad(s.joins + 1)} ▓ ${s.online} inside now · ${s.sleepers} napping · ${s.marks} marks on the floor`;
+}).catch(() => {});
+</script>
 </body>
 </html>

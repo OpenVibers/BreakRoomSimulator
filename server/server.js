@@ -27,6 +27,10 @@ app.get('/play', (req, res) => res.sendFile(path.join(__dirname, '..', 'public',
 app.post('/api/register', (req, res) => res.json(store.register(req.body.name, req.body.pass)));
 app.post('/api/login', (req, res) => res.json(store.login(req.body.name, req.body.pass)));
 app.post('/api/guest', (req, res) => res.json(store.guest()));
+app.get('/api/stats', (req, res) => res.json({
+  joins: stats.joins, naps: stats.naps, marks: tags.length,
+  sleepers: sleepers.size, props: props.size, online: players.size,
+}));
 
 // CLI: node server/server.js --admin SomeName   (grants admin to an account)
 const adminIdx = process.argv.indexOf('--admin');
@@ -92,9 +96,19 @@ try { savedWorld = JSON.parse(fs.readFileSync(WORLD_FILE, 'utf8')); } catch {}
 const sleepers = new Map(Object.entries(savedWorld.sleepers || {})); // key -> {key,name,vest,ap,guest,x,y,z,ry,ts}
 const props = new Map(Object.entries(savedWorld.props || {}));       // id -> {id,kind,p:[x,y,z],q:[x,y,z,w]}
 for (const [cid, c] of Object.entries(savedWorld.cars || {})) {
-  if (/^(car\d+|lambo)$/.test(cid) && Number.isFinite(c.x)) cars[cid] = { x: c.x, z: c.z, ry: c.ry || 0, driver: null };
+  if (!/^(car\d+|lambo)$/.test(cid)) continue;
+  if (Array.isArray(c.p)) cars[cid] = { p: c.p, q: Array.isArray(c.q) ? c.q : [0, 0, 0, 1], driver: null };
+  else if (Number.isFinite(c.x)) { // migrate pre-rigid-body saves {x,z,ry}
+    const h = (c.ry || 0) / 2;
+    cars[cid] = { p: [c.x, .55, c.z], q: [0, +Math.sin(h).toFixed(3), 0, +Math.cos(h).toFixed(3)], driver: null };
+  }
 }
 let nextPhysId = [...props.keys()].reduce((m, id) => Math.max(m, Number(String(id).slice(2)) || 0), 0) + 1;
+// permanent marker tags — the "I was here" layer. They outlive everyone.
+const tags = Array.isArray(savedWorld.tags) ? savedWorld.tags : [];
+let nextTagId = tags.reduce((m, t) => Math.max(m, Number(String(t.id).slice(1)) || 0), 0) + 1;
+// lifetime counters for the retro hit-counter energy
+const stats = Object.assign({ joins: 0, naps: 0 }, savedWorld.stats || {});
 function pruneSleepers() { // nappers expire after a week; keep the 60 most recent
   const cutoff = Date.now() - 7 * 864e5;
   for (const [k, s] of sleepers) if ((s.ts || 0) < cutoff) sleepers.delete(k);
@@ -108,7 +122,7 @@ let worldDirty = false;
 function saveWorld() {
   worldDirty = false;
   const tmp = WORLD_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify({ sleepers: Object.fromEntries(sleepers), cars, props: Object.fromEntries(props) }));
+  fs.writeFileSync(tmp, JSON.stringify({ sleepers: Object.fromEntries(sleepers), cars, props: Object.fromEntries(props), tags, stats }));
   fs.renameSync(tmp, WORLD_FILE); // atomic: a crash mid-write can't corrupt the state
 }
 setInterval(() => { if (worldDirty) saveWorld(); }, 10000);
@@ -160,10 +174,14 @@ wss.on('connection', (ws, req) => {
     worldDirty = true;
   }
   players.set(id, p);
+  stats.joins++;
+  worldDirty = true;
 
   ws.send(JSON.stringify({
     t: 'init', id, you: pubState(p), guest: user.guest, admin: user.admin,
     inv: user.inv, hotbar: user.hotbar,
+    visitorNum: stats.joins, stats: { joins: stats.joins, naps: stats.naps, marks: tags.length },
+    tags,
     mapEdits,
     players: [...players.values()].filter(q => q.id !== id).map(pubState),
     c4: { a: c4.a.state(), b: c4.b.state() },
@@ -190,7 +208,7 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     players.delete(id);
     for (const [cid, c] of Object.entries(cars)) {
-      if (c.driver === id) { c.driver = null; broadcast({ t: 'car', id: cid, op: 'exit', x: c.x, z: c.z, ry: c.ry }); }
+      if (c.driver === id) { c.driver = null; broadcast({ t: 'car', id: cid, op: 'exit', p: c.p, q: c.q }); }
     }
     for (const g of [c4.a, c4.b]) { g.leave(p.key); broadcast({ t: 'c4', s: g.state() }); }
     chess.leave(p.key); broadcast({ t: 'chess', s: chess.state() });
@@ -206,6 +224,7 @@ wss.on('connection', (ws, req) => {
       };
       sleepers.set(p.key, s);
       pruneSleepers();
+      stats.naps++;
       worldDirty = true;
       broadcast({ t: 'sleep', s });
       sys(`💤 ${p.name} dozed off mid-break`);
@@ -313,7 +332,17 @@ function handle(p, m) {
     case 'car': {
       const id = String(m.id || '').slice(0, 12);
       if (!/^(car\d+|lambo)$/.test(id)) return;
-      const c = cars[id] || (cars[id] = { x: null, z: null, ry: 0, driver: null });
+      const c = cars[id] || (cars[id] = { p: null, q: [0, 0, 0, 1], driver: null });
+      const readPose = () => { // full rigid-body pose: position + quaternion (+velocity)
+        const pos = Array.isArray(m.p) ? m.p.map(Number) : null;
+        const q = Array.isArray(m.q) ? m.q.map(Number) : null;
+        if (!pos || pos.length !== 3 || !pos.every(Number.isFinite) || !q || q.length !== 4 || !q.every(Number.isFinite)) return false;
+        c.p = [clampX(pos[0]), Math.max(0, Math.min(40, pos[1])), clampZ(pos[2])];
+        c.q = q.map(n => +n.toFixed(3));
+        worldDirty = true;
+        return true;
+      };
+      const vel = () => Array.isArray(m.v) && m.v.length === 3 && m.v.every(Number.isFinite) ? m.v : null;
       if (m.op === 'enter') {
         if (c.driver && c.driver !== p.id) return;
         c.driver = p.id;
@@ -322,15 +351,18 @@ function handle(p, m) {
       } else if (m.op === 'exit') {
         if (c.driver !== p.id) return;
         c.driver = null;
-        broadcast({ t: 'car', id, op: 'exit', x: c.x, z: c.z, ry: c.ry });
-      } else if (m.op === 'state') {
+        broadcast({ t: 'car', id, op: 'exit', p: c.p, q: c.q });
+      } else if (m.op === 'state') { // driver's stream
         if (c.driver !== p.id) return;
-        if (![m.x, m.z, m.ry].every(Number.isFinite)) return;
-        c.x = Math.max(-78, Math.min(148, m.x));
-        c.z = Math.max(-58, Math.min(186, m.z));
-        c.ry = m.ry;
-        worldDirty = true;
-        broadcast({ t: 'car', id, op: 'state', x: c.x, z: c.z, ry: c.ry, driver: p.id }, p.id);
+        if (!readPose()) return;
+        broadcast({ t: 'car', id, op: 'state', p: c.p, q: c.q, v: vel(), driver: p.id }, p.id);
+      } else if (m.op === 'phys') { // driverless nudge: physgun, shoves, rolling to a stop
+        if (c.driver) return;
+        if (!readPose()) return;
+        broadcast({ t: 'car', id, op: 'phys', p: c.p, q: c.q, v: vel(), owner: p.id }, p.id);
+      } else if (m.op === 'grab' || m.op === 'drop') { // physgun beam relay
+        if (m.op === 'grab' && c.driver) return;
+        broadcast({ t: 'car', id, op: m.op, by: p.id }, p.id);
       }
       break;
     }
@@ -375,6 +407,27 @@ function handle(p, m) {
     case 'gate': // badge-gate animation relay so everyone sees paddles open
       broadcast({ t: 'gate', id: String(m.id || '').slice(0, 20) });
       break;
+    case 'tag': { // permanent marker on the floor — your mark stays forever
+      const now = Date.now();
+      if (now - (p.lastTag || 0) < 20000) {
+        if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'sys', text: '🖊️ The marker needs a minute to dry — try again shortly.' }));
+        return;
+      }
+      const text = String(m.text || '').replace(/\s+/g, ' ').trim().slice(0, 48);
+      if (!text) return;
+      p.lastTag = now;
+      const tag = {
+        id: 't' + nextTagId++, name: p.name, text,
+        x: clampX(+(+m.x || 0).toFixed(1)), z: clampZ(+(+m.z || 0).toFixed(1)),
+        ry: +(+m.ry || 0).toFixed(2), hue: Math.floor(Math.random() * 360), ts: now,
+      };
+      tags.push(tag);
+      if (tags.length > 600) tags.shift(); // eventually the oldest ink fades
+      worldDirty = true;
+      broadcast({ t: 'tag', op: 'add', tag });
+      sys(`🖊️ ${p.name} left a mark`);
+      break;
+    }
     case 'edit': { // admin-only persistent level editor
       if (!p.admin) return;
       if (m.op === 'add' && m.prop && typeof m.prop.kind === 'string') {
