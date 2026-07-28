@@ -101,11 +101,25 @@ export function initInventory({ me, onEquip, onWear, onDropItem, toast }) {
   const onUp = (e) => {
     if (!drag) return;
     drag.ghost.remove();
-    const targetEl = document.elementFromPoint(e.clientX, e.clientY)?.closest('.slot');
-    const to = getRef(targetEl);
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    const to = getRef(under?.closest('.slot'));
     const from = drag.ref;
     drag = null;
-    if (!to || (to.arr === from.arr && to.i === from.i)) return;
+    if (!to) {
+      // dragged out over the game world: toss the whole stack, minecraft style
+      if (under?.id === 'game') {
+        const s = from.arr[from.i];
+        if (s) {
+          from.arr[from.i] = null;
+          if (from.arr === inv.hotbar && from.i === inv.sel) { onEquip(null); inv.sel = -1; }
+          renderHotbar(); renderInv(); save();
+          onDropItem?.(s.id, s.n);
+          beep(340, .06, 'sine', .08);
+        }
+      }
+      return;
+    }
+    if (to.arr === from.arr && to.i === from.i) return;
     const a = from.arr[from.i], b = to.arr[to.i];
     if (b && a && b.id === a.id && ITEMS[a.id].type === 'food') { // stack
       b.n += a.n; from.arr[from.i] = null;

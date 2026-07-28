@@ -9,6 +9,7 @@ import { initMinigames, beep } from './minigames.js';
 import { initProps } from './props.js';
 import { initEditor } from './editor.js';
 import { initPhysics, PHYS_KINDS } from './physics.js';
+import { initLighting, enableShadows } from './lighting.js';
 import { ct } from './textures.js';
 
 const $ = (id) => document.getElementById(id);
@@ -89,6 +90,8 @@ function start(token, user) {
   const mg = initMinigames(W, me, toast);
   const props = initProps(scene, () => me.admin);
   const phys = initPhysics(scene); // sandbox physics: dynamic props + physgun
+  const daylight = initLighting(scene, renderer, // shared day/night cycle
+    JSON.parse(localStorage.getItem('brs-cfg') || '{}').shadows !== false);
   let editor = null;
 
   // ---------- drivable cars (rigid-body vehicles — they roll and flip) ----------
@@ -168,10 +171,11 @@ function start(token, user) {
   let fp = false; // first-person mode
   // ---------- persistent game settings ----------
   const cfg = Object.assign(
-    { wheel: 'zoom', sens: 1.0, fov: 70, invertY: false },
+    { wheel: 'zoom', sens: 1.0, fov: 70, invertY: false, shadows: true },
     JSON.parse(localStorage.getItem('brs-cfg') || '{}'));
   const saveCfg = () => localStorage.setItem('brs-cfg', JSON.stringify(cfg));
   let myAvatar = makeAvatar(me.name, me.vest, me.guest, me.ap);
+  enableShadows(myAvatar.group);
   scene.add(myAvatar.group);
   function rebuildMyAvatar() {
     const held = myAvatar.held, seatId = myAvatar.seatId;
@@ -179,6 +183,7 @@ function start(token, user) {
     myAvatar = makeAvatar(me.name, me.vest, me.guest, me.ap);
     myAvatar.setHeld(held);
     myAvatar.seatId = seatId;
+    enableShadows(myAvatar.group);
     scene.add(myAvatar.group);
     updateViewmodel(); // refresh first-person hands to the new look
   }
@@ -508,6 +513,7 @@ function start(token, user) {
     if (others.has(p.id)) return;
     const avatar = makeAvatar(p.name, p.vest, false, p.ap);
     avatar.group.position.set(p.x, p.y, p.z);
+    enableShadows(avatar.group);
     scene.add(avatar.group);
     others.set(p.id, { avatar, name: p.name, vest: p.vest, ap: p.ap, target: { x: p.x, y: p.y, z: p.z, ry: p.ry } });
   }
@@ -548,6 +554,7 @@ function start(token, user) {
     const zz = zzzSprite();
     zz.position.set(.2, .7, -.7);
     root.add(zz);
+    enableShadows(root);
     scene.add(root);
     sleeperMap.set(s.key, { root, zz, t: Math.random() * 6 });
   }
@@ -562,9 +569,19 @@ function start(token, user) {
 
   // ---------- dropped items on the floor (minecraft style) ----------
   const worldDrops = new Map(); // id -> {group, mesh, inter, t}
-  function dropItemInWorld(id) {
+  function nearFire() {
+    const f = W.anchors.fire;
+    return f && Math.hypot(my.x - f.x, my.z - f.z) < 2.2;
+  }
+  function burnItems(id, n = 1) {
+    toast(`🔥 ${ITEMS[id].icon} ${ITEMS[id].name}${n > 1 ? ' ×' + n : ''} went up in flames`, 3200);
+    beep(200, .25, 'sawtooth', .1);
+    setTimeout(() => beep(140, .3, 'sawtooth', .06), 180);
+  }
+  function dropItemInWorld(id, n = 1) {
+    if (nearFire()) { burnItems(id, n); return; } // dropped into the barrel
     const fx = -Math.sin(my.yaw), fz = -Math.cos(my.yaw);
-    net.send({ t: 'drop', op: 'add', item: id, n: 1, x: +(my.x + fx * 1.3).toFixed(2), y: .35, z: +(my.z + fz * 1.3).toFixed(2) });
+    net.send({ t: 'drop', op: 'add', item: id, n, x: +(my.x + fx * 1.3).toFixed(2), y: .35, z: +(my.z + fz * 1.3).toFixed(2) });
   }
   function addWorldDrop(d) {
     removeWorldDrop(d.id);
@@ -578,6 +595,7 @@ function start(token, user) {
     sh.position.y = .012;
     group.add(sh);
     group.position.set(d.x, 0, d.z);
+    enableShadows(group);
     scene.add(group);
     const def = ITEMS[d.item];
     const it = { id: `drop-${d.id}`, type: 'dropitem', x: d.x, z: d.z, r: 1.2, label: `Pick up ${def.icon} ${def.name}${d.n > 1 ? ' ×' + d.n : ''}`, data: { drop: d.id } };
@@ -676,13 +694,22 @@ function start(token, user) {
   const pgState = { held: null, dist: 0, lmb: false, missT: 0 };
   const pgRay = new THREE.Raycaster();
   function pgEquipped() { return my.held === 'physgun'; }
+  function pgPick() {
+    // fan of rays around the crosshair so edge clicks still land
+    let best = null;
+    for (const [ox, oy] of [[0, 0], [.028, 0], [-.028, 0], [0, .028], [0, -.028], [.055, 0], [-.055, 0], [0, .055], [0, -.055]]) {
+      pgRay.setFromCamera(new THREE.Vector2(ox, oy), camera);
+      const hit = phys.raycast(pgRay, 22);
+      if (hit && (!best || hit.distance < best.distance)) best = hit;
+    }
+    return best;
+  }
   function physgunGrab() {
     if (!pgEquipped() || pgState.held) return;
-    pgRay.setFromCamera(new THREE.Vector2(0, 0), camera);
-    const hit = phys.raycast(pgRay, 14);
+    const hit = pgPick();
     if (!hit) return;
     pgState.held = hit.e;
-    pgState.dist = Math.max(1.6, Math.min(hit.e.isCar ? 12 : 10, hit.distance));
+    pgState.dist = Math.max(1.6, Math.min(hit.e.isCar ? 16 : 12, hit.distance));
     hit.e.grabbedBy = myId;
     phys.claim(hit.e);
     hit.e.body.angularDamping = .92;
@@ -883,12 +910,14 @@ function start(token, user) {
     $('set-sens').value = cfg.sens;
     $('set-fov').value = cfg.fov;
     $('set-inverty').checked = cfg.invertY;
+    $('set-shadows').checked = cfg.shadows !== false;
   };
   $('set-wheel-zoom').onclick = () => { cfg.wheel = 'zoom'; saveCfg(); refreshCfgUI(); };
   $('set-wheel-hotbar').onclick = () => { cfg.wheel = 'hotbar'; saveCfg(); refreshCfgUI(); };
   $('set-sens').oninput = (e) => { cfg.sens = +e.target.value; saveCfg(); };
   $('set-fov').oninput = (e) => { cfg.fov = +e.target.value; camera.fov = cfg.fov; camera.updateProjectionMatrix(); saveCfg(); };
   $('set-inverty').onchange = (e) => { cfg.invertY = e.target.checked; saveCfg(); };
+  $('set-shadows').onchange = (e) => { cfg.shadows = e.target.checked; daylight.setShadows(cfg.shadows); saveCfg(); };
   camera.fov = cfg.fov; camera.updateProjectionMatrix();
   refreshCfgUI();
   $('btn-close-settings').onclick = () => { $('settings').classList.add('hidden'); uiFocus('settings', false); };
@@ -973,6 +1002,13 @@ function start(token, user) {
         case 'dropitem':
           net.send({ t: 'drop', op: 'take', id: nearest.data.drop });
           return;
+        case 'fire': {
+          const sel = invApi.selectedItem();
+          if (!sel) { toast('🔥 Warm. Select an item (1–6) and press E to burn it.'); return; }
+          const burned = invApi.dropSelected();
+          if (burned) burnItems(burned);
+          return;
+        }
         case 'micro':
           toast('🍜 *microwave hums for 90 seconds*', 3200);
           beep(980, .5, 'sine', .06);
@@ -1264,6 +1300,9 @@ function start(token, user) {
       e.mesh.position.y = e.baseY + Math.sin(e.t * 2.2) * .06;
     }
 
+    daylight.update(my.x, my.z);
+    W.dynamic.fires?.forEach(f => f.update(dt));
+
     scanInteractables();
     mg.update(dt);
 
@@ -1277,7 +1316,7 @@ function start(token, user) {
 
   // debug/testing handle
   window.__brs = {
-    my, mg, scene, W, phys, input, teleport: (x, z, yaw) => { my.x = x; my.z = z; if (yaw !== undefined) my.yaw = yaw; sendPos(true); },
+    my, mg, scene, W, phys, input, renderer, daylight, teleport: (x, z, yaw) => { my.x = x; my.z = z; if (yaw !== undefined) my.yaw = yaw; sendPos(true); },
     action: doAction, nearest: () => nearest?.id || nearestSeat?.id || null,
     spawnProp, toggleSpawn, physgunGrab, physgunRelease, pgState, sleepers: sleeperMap, inv: invApi,
     drops: worldDrops, dropItem: dropItemInWorld,

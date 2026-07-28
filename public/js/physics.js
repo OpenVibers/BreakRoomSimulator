@@ -8,6 +8,7 @@ import * as CANNON from 'cannon-es';
 import { W } from './world.js';
 import { net } from './net.js';
 import { ct } from './textures.js';
+import { enableShadows } from './lighting.js';
 
 const boxTex = () => ct(128, 128, (g, w, h) => {
   g.fillStyle = '#b98d5f'; g.fillRect(0, 0, w, h);
@@ -129,7 +130,7 @@ export function initPhysics(scene) {
   }
   // cars are full rigid bodies: they roll, flip, get shoved, and can be
   // physgunned around while nobody's driving — proper gmod energy
-  const CAR_HH = .5; // chassis half-height; visual group origin sits at the wheels
+  const CAR_HH = .42; // chassis half-height; visual group origin sits at the wheels
   const carMat = new CANNON.Material('car');
   // EXACTLY zero chassis-ground friction: the friction solver zeroes the
   // tangential velocity of a heavy resting box under ANY nonzero μ (verified
@@ -140,11 +141,15 @@ export function initPhysics(scene) {
   let myId = null;
   const cars = new Map(); // id -> {id, car, body, isCar, owned, grabbedBy, remote, rp, rq, rv, remoteT}
   for (const car of W.cars || []) {
+    // hitbox matched to the visual car (4.1×1.8 body, 1.3 roof): chassis box
+    // plus a smaller cabin box on top so the shape rolls/stacks believably
+    const hl = car.hl ?? (car.hl = 2.05), hw = car.hw ?? (car.hw = .9);
     const body = new CANNON.Body({
       mass: 180, material: carMat,
-      shape: new CANNON.Box(new CANNON.Vec3(car.hl || 2.15, CAR_HH, car.hw || 1.0)),
       angularDamping: .6, linearDamping: .12,
     });
+    body.addShape(new CANNON.Box(new CANNON.Vec3(hl, CAR_HH, hw)));
+    body.addShape(new CANNON.Box(new CANNON.Vec3(hl * .52, .24, hw * .86)), new CANNON.Vec3(0, CAR_HH + .2, -.1));
     body.position.set(car.x, CAR_HH + .05, car.z);
     body.quaternion.setFromEuler(0, car.ry, 0);
     body.sleepSpeedLimit = .35;
@@ -242,6 +247,7 @@ export function initPhysics(scene) {
     world.addBody(body);
     const mesh = def.build();
     mesh.position.copy(body.position);
+    enableShadows(mesh);
     scene.add(mesh);
     const e = { id: prop.id, kind: prop.kind, body, mesh, owned: mine, grabbedBy: null };
     props.set(prop.id, e);

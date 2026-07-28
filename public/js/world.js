@@ -14,6 +14,7 @@ export const W = { // world registry
   anchors: {},         // named positions/groups for minigames
   dynamic: {},         // tv/clock updaters
   camBlockers: [],     // meshes the 3rd-person camera must not clip through
+  nightGlow: [],       // {m, day, night} emissive materials that wake up after dark
 };
 const blocker = (m) => { W.camBlockers.push(m); return m; };
 
@@ -2659,6 +2660,7 @@ function streets(scene) {
   }
   // street lights along 172nd
   const lampM = new THREE.MeshStandardMaterial({ color: 0xfff3c9, emissive: 0xfff3c9, emissiveIntensity: .9 });
+  W.nightGlow.push({ m: lampM, day: .25, night: 2.4 });
   for (const lz of [-30, 10, 50, 90, 126]) {
     scene.add(cyl(.07, .09, 6.4, M.blackMetal, 132.2, 3.2, lz, 8));
     scene.add(box(1.6, .08, .12, M.blackMetal, 133, 6.35, lz));
@@ -2683,7 +2685,9 @@ function streets(scene) {
     h.add(box(.9, 1.9, .08, new THREE.MeshStandardMaterial({ color: 0x4a3626, roughness: .8 }), -1.1, .95, 2.12)); // door
     for (const wx of [.7, 1.7]) h.add(box(.9, .8, .06, new THREE.MeshStandardMaterial({ color: 0xbfd6e4, roughness: .25, metalness: .3 }), wx, 1.5, 2.12));
     if (isHome) {
-      h.add(box(.22, .14, .14, new THREE.MeshStandardMaterial({ color: 0xffd34d, emissive: 0xffb52e, emissiveIntensity: .9 }), -1.75, 2.15, 2.14)); // porch light
+      const porchM = new THREE.MeshStandardMaterial({ color: 0xffd34d, emissive: 0xffb52e, emissiveIntensity: .9 });
+      W.nightGlow.push({ m: porchM, day: .3, night: 2.6 });
+      h.add(box(.22, .14, .14, porchM, -1.75, 2.15, 2.14)); // porch light
       const mat = new THREE.Mesh(new THREE.PlaneGeometry(1, .6), new THREE.MeshBasicMaterial({ map: TX.ct(96, 64, (g, w, hh) => { g.fillStyle = '#7a4b2a'; g.fillRect(0, 0, w, hh); g.fillStyle = '#fff'; g.font = '700 15px "Segoe UI"'; g.textAlign = 'center'; g.fillText('WELCOME', w / 2, 38); }) }));
       mat.rotation.x = -Math.PI / 2; mat.position.set(-1.1, .02, 2.75); h.add(mat);
     }
@@ -2704,6 +2708,86 @@ function streets(scene) {
   scene.add(mbPost);
   scene.add(box(.5, .3, .32, new THREE.MeshStandardMaterial({ color: 0x2e4d8a, roughness: .5 }), 27.4, 1.2, 172.2));
   inter({ id: 'home', type: 'home', x: 30, z: 174.2, r: 2.4, label: 'You made it — go relax 🏠' });
+  // ---- burn barrel on the outskirts: the night-shift hangout. Toss junk in
+  // and it's gone forever (E with an item selected, or drop stuff into it) ----
+  const rustBarrelM = new THREE.MeshStandardMaterial({ color: 0x6e4530, roughness: .85, metalness: .3 });
+  const fireG = new THREE.Group();
+  fireG.add(cyl(.36, .33, .92, rustBarrelM, 0, .46, 0, 12));
+  fireG.add(cyl(.33, .33, .05, new THREE.MeshStandardMaterial({ color: 0x0d0b09, roughness: .95 }), 0, .9, 0, 12));
+  const emberM = new THREE.MeshStandardMaterial({ color: 0xff5a1c, emissive: 0xff5a1c, emissiveIntensity: 2.2 });
+  W.nightGlow.push({ m: emberM, day: 1.6, night: 3.2 });
+  fireG.add(cyl(.28, .28, .04, emberM, 0, .93, 0, 12));
+  // crossed flame planes, animated in the frame loop
+  const flameTex = TX.ct(64, 96, (g, w, h) => {
+    const gr = g.createLinearGradient(0, h, 0, 0);
+    gr.addColorStop(0, 'rgba(255,120,20,.95)');
+    gr.addColorStop(.45, 'rgba(255,180,40,.8)');
+    gr.addColorStop(.8, 'rgba(255,230,120,.35)');
+    gr.addColorStop(1, 'rgba(255,240,180,0)');
+    g.fillStyle = gr;
+    g.beginPath();
+    g.moveTo(w / 2, 0);
+    g.quadraticCurveTo(w * .95, h * .45, w * .62, h);
+    g.lineTo(w * .38, h);
+    g.quadraticCurveTo(w * .05, h * .45, w / 2, 0);
+    g.fill();
+  });
+  const flames = [];
+  for (let i = 0; i < 3; i++) {
+    const f = new THREE.Mesh(new THREE.PlaneGeometry(.55, .8), new THREE.MeshBasicMaterial({
+      map: flameTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false,
+    }));
+    f.position.set(0, 1.3, 0);
+    f.rotation.y = i * Math.PI / 3;
+    fireG.add(f);
+    flames.push(f);
+  }
+  const fireLight = new THREE.PointLight(0xff7722, 1.8, 11, 2);
+  fireLight.position.set(0, 1.4, 0);
+  fireG.add(fireLight);
+  // rising smoke puffs
+  const smokeTex = TX.ct(64, 64, (g, w, h) => {
+    const gr = g.createRadialGradient(w / 2, h / 2, 4, w / 2, h / 2, 30);
+    gr.addColorStop(0, 'rgba(90,90,95,.55)');
+    gr.addColorStop(1, 'rgba(90,90,95,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  });
+  const puffs = [];
+  for (let i = 0; i < 4; i++) {
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: smokeTex, transparent: true, depthWrite: false }));
+    sp.position.set(0, 1.6 + i * .7, 0);
+    sp.scale.setScalar(.5);
+    fireG.add(sp);
+    puffs.push({ sp, t: i * .8 });
+  }
+  fireG.position.set(127.8, 0, 45.5);
+  scene.add(fireG);
+  collide(127.8, 45.5, .85, .85);
+  W.anchors.fire = { x: 127.8, z: 45.5 };
+  (W.dynamic.fires ||= []).push({
+    t: Math.random() * 10,
+    update(dt) {
+      this.t += dt;
+      for (let i = 0; i < flames.length; i++) {
+        const f = flames[i];
+        const k = Math.sin(this.t * (7 + i * 2.3) + i * 2.1);
+        f.scale.set(1 + k * .12, .9 + Math.sin(this.t * 9 + i) * .18 + .15, 1);
+        f.material.opacity = .75 + k * .2;
+        f.rotation.y += dt * (i % 2 ? .8 : -.6);
+      }
+      fireLight.intensity = 1.6 + Math.sin(this.t * 11) * .35 + Math.sin(this.t * 23) * .2;
+      for (const p of puffs) {
+        p.t += dt;
+        const k = (p.t % 3.2) / 3.2;
+        p.sp.position.y = 1.4 + k * 3.2;
+        p.sp.position.x = Math.sin(p.t * .9) * .2;
+        p.sp.scale.setScalar(.35 + k * 1.1);
+        p.sp.material.opacity = (1 - k) * .5;
+      }
+    },
+  });
+  inter({ id: 'fire', type: 'fire', x: 127.8, z: 45.5, r: 1.8, label: 'Toss something into the fire 🔥' });
+
   // a strange humming tool someone dropped on the shoulder of 172nd —
   // finders keepers: this is the physgun
   const pgGlow = new THREE.MeshStandardMaterial({ color: 0x35e0ff, emissive: 0x35e0ff, emissiveIntensity: 1.6, roughness: .3 });
@@ -2798,7 +2882,7 @@ export function buildWorld(scene) {
   mats();
   scene.background = new THREE.Color(0xbcd2e2);
   scene.fog = new THREE.Fog(0xbcd2e2, 90, 260); // far enough to see down the streets
-  lights(scene);
+  // lighting lives in lighting.js now (day/night cycle, shadows)
   // ---- cafeteria block: built in its legacy local frame, then rotated 90 deg and
   // moved SOUTH of the security block per the site plan — the old east door
   // wall now faces north into the locker hallway, and the old south window run
