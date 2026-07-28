@@ -18,6 +18,7 @@ export const ITEMS = {
   tube:    { name: 'Cardboard tube', icon: '📦', type: 'melee' },
   wrench:  { name: 'Wrench',       icon: '🔧', type: 'melee' },
   banana:  { name: 'Banana',       icon: '🍌', type: 'melee' },
+  physgun: { name: 'Physgun',      icon: '🧲', type: 'tool' },
   'hat-cap':     { name: 'Cap',      icon: '🧢', type: 'clothes', ap: { hat: 1 } },
   'hat-beanie':  { name: 'Beanie',   icon: '👒', type: 'clothes', ap: { hat: 2 } },
   'hat-hardhat': { name: 'Hard hat', icon: '⛑️', type: 'clothes', ap: { hat: 3 } },
@@ -170,6 +171,21 @@ export function initInventory({ me, onEquip, onWear, toast }) {
     }
     return { melee: s.id, def: d };
   }
+  // server-authoritative reload: the init message carries the stored inventory
+  // (the localStorage user copy goes stale the moment anything is picked up)
+  function restore(slots, hotbar) {
+    if (!Array.isArray(slots) && !Array.isArray(hotbar)) return;
+    if (Array.isArray(slots)) inv.slots = inv.slots.map((_, i) => {
+      const s = slots[i];
+      return s && ITEMS[s.id] ? { id: s.id, n: s.n || 1 } : null;
+    });
+    if (Array.isArray(hotbar)) inv.hotbar = inv.hotbar.map((_, i) => {
+      const s = hotbar[i];
+      return s && ITEMS[s.id] ? { id: s.id, n: s.n || 1 } : null;
+    });
+    renderHotbar(); renderInv();
+  }
+
   function toggle(open) {
     inv.open = open ?? !inv.open;
     invEl.classList.toggle('hidden', !inv.open);
@@ -185,5 +201,5 @@ export function initInventory({ me, onEquip, onWear, toast }) {
     if (el?.dataset?.bar !== undefined) select(+el.dataset.bar);
   });
 
-  return { add, select, useSelected, toggle, selectedItem, state: inv };
+  return { add, select, useSelected, toggle, selectedItem, restore, state: inv };
 }

@@ -8,6 +8,8 @@ import { net, api, connect } from './net.js';
 import { initMinigames, beep } from './minigames.js';
 import { initProps } from './props.js';
 import { initEditor } from './editor.js';
+import { initPhysics, PHYS_KINDS } from './physics.js';
+import { ct } from './textures.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -35,16 +37,23 @@ $('btn-guest').onclick = async () => {
 };
 
 // auto-login with saved token (or ?autoguest for quick testing)
+let started = false; // must be initialized BEFORE start() runs from this block —
+                     // as a `let` below it, the call hit the temporal dead zone and
+                     // silently killed every saved-token auto-login
 const saved = localStorage.getItem('brs-token');
 const savedUser = localStorage.getItem('brs-user');
 if (saved && savedUser) {
-  try { start(saved, JSON.parse(savedUser)); } catch { localStorage.clear(); }
+  try { start(saved, JSON.parse(savedUser)); }
+  catch (err) {
+    console.error('start() failed:', err);
+    window.__startErr = String(err?.stack || err);
+    localStorage.clear();
+  }
 } else if (location.search.includes('autoguest')) {
   api('guest').then(r => { if (!r.error) start(r.token, r.user); });
 }
 
 // ============================== GAME ==============================
-let started = false;
 function start(token, user) {
   if (started) return;
   started = true;
@@ -79,6 +88,7 @@ function start(token, user) {
   };
   const mg = initMinigames(W, me, toast);
   const props = initProps(scene, () => me.admin);
+  const phys = initPhysics(scene); // sandbox physics: dynamic props + physgun
   let editor = null;
 
   // ---------- drivable cars (arcade vehicle physics) ----------
@@ -306,6 +316,9 @@ function start(token, user) {
     vmSwing = 1;
     net.send({ t: 'swing' });
     beep(240, .09, 'sawtooth', .07);
+    // send nearby physics props flying
+    const fx = -Math.sin(my.yaw), fz = -Math.cos(my.yaw);
+    if (phys.smack(my.x, my.y, my.z, fx, fz)) beep(160, .08, 'square', .09);
   }
   net.on('swing', (m) => {
     if (m.id === myId) return;
@@ -315,6 +328,7 @@ function start(token, user) {
   function useKey() {
     const r = invApi.useSelected();
     if (!r) return;
+    if (r.melee === 'physgun') { toast('🧲 Hold left-click to grab · wheel push/pull · R spin · X delete · Q spawns props'); return; }
     if (r.melee) { doSwing(); return; }
     if (r.def) {
       toast(`😋 ${r.def.icon} ${r.def.name} — delicious.`);
@@ -332,6 +346,8 @@ function start(token, user) {
       invApi.toggle();
     } else if (e.code === 'KeyV') setFP(!fp);
     else if (e.code === 'KeyF') useKey();
+    else if (e.code === 'KeyQ') toggleSpawn();
+    else if (e.code === 'KeyX' && pgState.held) net.send({ t: 'prop', op: 'del', id: pgState.held.id });
   });
 
   // ---------- chat ----------
@@ -368,8 +384,9 @@ function start(token, user) {
     if (e.code === 'Enter' && !input.chatOpen && !mg.inArcade() && started) { openChat(); e.preventDefault(); }
     else if (e.code === 'Escape' && input.chatOpen) closeChat();
     else if (e.code === 'Escape' && started) {
-      // Escape closes the top UI panel (inventory/settings) like any game menu
-      if (invApi.state.open) invApi.toggle(false);
+      // Escape closes the top UI panel (spawn/inventory/settings) like any game menu
+      if (spawnOpen) toggleSpawn(false);
+      else if (invApi.state.open) invApi.toggle(false);
       else if (!$('settings').classList.contains('hidden')) { $('settings').classList.add('hidden'); uiFocus('settings', false); }
     }
   });
@@ -388,7 +405,10 @@ function start(token, user) {
       if (c.driver) car.col.off = true;
     }
     me.admin = !!m.admin;
+    invApi.restore(m.inv, m.hotbar); // server copy of the inventory wins
     (m.mapEdits || []).forEach(p => props.add(p));
+    (m.sleepers || []).forEach(addSleeper);
+    (m.props || []).forEach(pr => phys.add(pr));
     if (me.admin && !editor) editor = initEditor({ scene, camera, props, toast });
     $('online-count').textContent = m.online;
     for (const p of m.players) addOther(p);
@@ -455,13 +475,208 @@ function start(token, user) {
     others.set(p.id, { avatar, name: p.name, vest: p.vest, ap: p.ap, target: { x: p.x, y: p.y, z: p.z, ry: p.ry } });
   }
 
+  // ---------- sleepers: nobody disappears — leavers nap where they stood ----------
+  const sleeperMap = new Map(); // key -> {root, zz, t}
+  function zzzSprite() {
+    const tex = ct(96, 96, (g, w, h) => {
+      g.font = '64px serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('💤', w / 2, h / 2 + 6);
+    });
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+    sp.scale.set(.5, .5, 1);
+    sp.renderOrder = 5;
+    return sp;
+  }
+  function addSleeper(s) {
+    removeSleeper(s.key);
+    const av = makeAvatar(s.name, s.vest, s.guest, s.ap);
+    const root = new THREE.Group();
+    root.position.set(s.x, 0, s.z);
+    root.rotation.y = s.ry || 0;
+    av.group.rotation.x = -Math.PI / 2;  // flat on their back
+    av.group.position.set(0, .16, .9);   // back on the floor, body centered on the spot
+    av.parts.armL.rotation.z = .55;      // relaxed nap pose
+    av.parts.armR.rotation.z = -.35;
+    av.parts.legL.rotation.x = -.35;     // one knee up, break-room classic
+    av.parts.head.rotation.y = .4;
+    av.shadow.visible = false;           // the round shadow would stand upright now
+    av.group.remove(av.tag);             // name tag floats over the napper, not the feet
+    av.tag.position.set(0, 1.0, 0);
+    root.add(av.group, av.tag);
+    const sh = new THREE.Mesh(new THREE.CircleGeometry(.55, 18), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: .22, depthWrite: false }));
+    sh.rotation.x = -Math.PI / 2;
+    sh.position.y = .02;
+    sh.scale.set(.7, 1.6, 1);
+    root.add(sh);
+    const zz = zzzSprite();
+    zz.position.set(.2, .7, -.7);
+    root.add(zz);
+    scene.add(root);
+    sleeperMap.set(s.key, { root, zz, t: Math.random() * 6 });
+  }
+  function removeSleeper(key) {
+    const e = sleeperMap.get(key);
+    if (!e) return;
+    scene.remove(e.root);
+    sleeperMap.delete(key);
+  }
+  net.on('sleep', (m) => addSleeper(m.s));
+  net.on('wake', (m) => removeSleeper(m.key));
+
+  // ---------- sandbox: spawn menu (Q) ----------
+  const spawnEl = $('spawn-menu'), spawnGrid = $('spawn-grid');
+  for (const [kind, def] of Object.entries(PHYS_KINDS)) {
+    const b = document.createElement('button');
+    b.innerHTML = `<span class="ico">${def.icon}</span>${def.label}`;
+    b.onclick = () => { spawnProp(kind); toggleSpawn(false); };
+    spawnGrid.appendChild(b);
+  }
+  let spawnOpen = false;
+  function toggleSpawn(open) {
+    spawnOpen = open ?? !spawnOpen;
+    spawnEl.classList.toggle('hidden', !spawnOpen);
+    uiFocus('spawn', spawnOpen);
+  }
+  function spawnProp(kind) {
+    const fx = -Math.sin(my.yaw), fz = -Math.cos(my.yaw);
+    net.send({ t: 'prop', op: 'spawn', kind, p: [+(my.x + fx * 2.2).toFixed(2), 1.3, +(my.z + fz * 2.2).toFixed(2)] });
+    toast(`${PHYS_KINDS[kind].icon} ${PHYS_KINDS[kind].label} incoming!`);
+  }
+
+  // ---------- physgun: hold LMB to grab · wheel push/pull · R spin · X delete ----------
+  const pgState = { held: null, dist: 0 };
+  const pgRay = new THREE.Raycaster();
+  function pgEquipped() { return my.held === 'physgun'; }
+  function physgunGrab() {
+    if (!pgEquipped() || pgState.held) return;
+    pgRay.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const hit = phys.raycast(pgRay, 14);
+    if (!hit) return;
+    pgState.held = hit.e;
+    pgState.dist = Math.max(1.6, Math.min(10, hit.distance));
+    hit.e.grabbedBy = myId;
+    phys.claim(hit.e);
+    hit.e.body.angularDamping = .92;
+    net.send({ t: 'prop', op: 'grab', id: hit.e.id });
+    beep(880, .06, 'square', .05);
+  }
+  function physgunRelease(throwIt = true) {
+    const e = pgState.held;
+    if (!e) return;
+    pgState.held = null;
+    e.grabbedBy = null;
+    e.body.angularDamping = .35;
+    net.send({ t: 'prop', op: 'drop', id: e.id });
+    if (throwIt) phys.sendState(e); // carries the fling velocity
+    beep(440, .05, 'square', .04);
+  }
+  addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || !input.locked || input.uiOpen || input.chatOpen) return;
+    if (pgEquipped()) physgunGrab();
+  });
+  addEventListener('mouseup', (e) => { if (e.button === 0 && pgState.held) physgunRelease(); });
+
+  // beams: one for me, plus one per prop another player is holding
+  function glowDot() {
+    const tex = ct(64, 64, (g, w, h) => {
+      const r = g.createRadialGradient(w / 2, h / 2, 2, w / 2, h / 2, 30);
+      r.addColorStop(0, 'rgba(150,240,255,1)'); r.addColorStop(1, 'rgba(53,224,255,0)');
+      g.fillStyle = r; g.fillRect(0, 0, w, h);
+    });
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, blending: THREE.AdditiveBlending, depthTest: false }));
+    sp.scale.set(.55, .55, 1);
+    sp.renderOrder = 7;
+    return sp;
+  }
+  const beams = new Map(); // key ('me' | propId) -> {line, dot}
+  const beamV = new THREE.Vector3();
+  function beamFor(key) {
+    let b = beams.get(key);
+    if (!b) {
+      const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+      const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x35e0ff, transparent: true, opacity: .8, blending: THREE.AdditiveBlending, depthTest: false }));
+      line.renderOrder = 7;
+      line.frustumCulled = false;
+      const dot = glowDot();
+      scene.add(line, dot);
+      b = { line, dot };
+      beams.set(key, b);
+    }
+    return b;
+  }
+  function setBeam(key, from, to) {
+    const b = beamFor(key);
+    const pos = b.line.geometry.attributes.position;
+    pos.setXYZ(0, from.x, from.y, from.z);
+    pos.setXYZ(1, to.x, to.y, to.z);
+    pos.needsUpdate = true;
+    b.dot.position.copy(to);
+  }
+  function updateBeams() {
+    const live = new Set();
+    if (pgState.held) {
+      live.add('me');
+      let from;
+      if (fp) {
+        const dir = camera.getWorldDirection(beamV.set(0, 0, 0));
+        from = camera.position.clone().addScaledVector(dir, .5);
+        from.y -= .18;
+      } else {
+        from = myAvatar.heldAnchor.getWorldPosition(new THREE.Vector3());
+      }
+      setBeam('me', from, pgState.held.body.position);
+    }
+    for (const e of phys.props.values()) {
+      if (e.grabbedBy && e.grabbedBy !== myId) {
+        const o = others.get(e.grabbedBy);
+        if (!o) continue;
+        live.add(e.id);
+        setBeam(e.id, o.avatar.heldAnchor.getWorldPosition(beamV), e.body.position);
+      }
+    }
+    for (const [key, b] of beams) {
+      if (!live.has(key)) { scene.remove(b.line, b.dot); beams.delete(key); }
+    }
+  }
+
+  net.on('prop', (m) => {
+    if (m.op === 'add') {
+      const mine = m.owner === myId;
+      phys.add(m.prop, { mine });
+      if (mine) beep(620, .07, 'sine', .08);
+    } else if (m.op === 'state') phys.applyState(m);
+    else if (m.op === 'del') {
+      if (pgState.held?.id === m.id) physgunRelease(false);
+      phys.remove(m.id);
+    } else if (m.op === 'grab') {
+      const e = phys.props.get(m.id);
+      if (e) { e.grabbedBy = m.by; e.owned = false; }
+    } else if (m.op === 'drop') {
+      const e = phys.props.get(m.id);
+      if (e) e.grabbedBy = null;
+    }
+  });
+
   connect(token, {
     onOpen: () => {},
     onClose: (e) => {
       $('hud').classList.add('hidden');
       if (e.code === 4001) { localStorage.clear(); location.reload(); return; }
-      $('disc-reason').textContent = e.code === 4002 ? 'You logged in from another device.' : 'Lost connection to the break room.';
+      if (e.code === 4002) {
+        $('disc-reason').textContent = 'You logged in from another device.';
+        $('disconnected').classList.remove('hidden');
+        return;
+      }
+      // server restart / blip: your napper is holding your spot — poll until
+      // the server is back, then rejoin (a blind reload would strand the tab
+      // on a connection-refused page)
+      $('disc-reason').textContent = 'Lost connection — waking you back up…';
       $('disconnected').classList.remove('hidden');
+      const retry = async () => {
+        try { await fetch('/play', { method: 'HEAD', cache: 'no-store' }); location.reload(); }
+        catch { setTimeout(retry, 2000); }
+      };
+      setTimeout(retry, 1800);
     },
   });
   $('btn-reconnect').onclick = () => location.reload();
@@ -872,6 +1087,34 @@ function start(token, user) {
       g.pr.rotation.y += (target - g.pr.rotation.y) * Math.min(1, dt * 8);
     }
 
+    // ---- sandbox physics ----
+    if (pgState.held) {
+      const held = pgState.held;
+      if (!pgEquipped() || !phys.props.has(held.id)) physgunRelease(false);
+      else { // drag the grabbed prop toward the point pgState.dist along the view ray
+        const b = held.body;
+        b.wakeUp();
+        const dir2 = camera.getWorldDirection(beamV);
+        const tx3 = camera.position.x + dir2.x * pgState.dist;
+        const ty3 = Math.max(.3, camera.position.y + dir2.y * pgState.dist);
+        const tz3 = camera.position.z + dir2.z * pgState.dist;
+        let vx3 = (tx3 - b.position.x) * 10, vy3 = (ty3 - b.position.y) * 10, vz3 = (tz3 - b.position.z) * 10;
+        const vl = Math.hypot(vx3, vy3, vz3);
+        if (vl > 22) { vx3 *= 22 / vl; vy3 *= 22 / vl; vz3 *= 22 / vl; }
+        b.velocity.set(vx3, vy3, vz3);
+        if (input.keys.KeyR) b.angularVelocity.set(0, 2.8, 0);
+      }
+    }
+    phys.step(dt, my);
+    updateBeams();
+
+    // sleepers dream
+    for (const s of sleeperMap.values()) {
+      s.t += dt;
+      s.zz.position.y = .7 + Math.sin(s.t * 1.6) * .07;
+      s.zz.material.opacity = .65 + Math.sin(s.t * 1.6) * .3;
+    }
+
     scanInteractables();
     mg.update(dt);
 
@@ -885,12 +1128,17 @@ function start(token, user) {
 
   // debug/testing handle
   window.__brs = {
-    my, mg, scene, W, teleport: (x, z, yaw) => { my.x = x; my.z = z; if (yaw !== undefined) my.yaw = yaw; sendPos(true); },
+    my, mg, scene, W, phys, teleport: (x, z, yaw) => { my.x = x; my.z = z; if (yaw !== undefined) my.yaw = yaw; sendPos(true); },
     action: doAction, nearest: () => nearest?.id || nearestSeat?.id || null,
+    spawnProp, toggleSpawn, physgunGrab, physgunRelease, pgState, sleepers: sleeperMap, inv: invApi,
   };
 
   addEventListener('wheel', (e) => {
     if (input.uiOpen) return; // scrolling a panel shouldn't zoom/cycle
+    if (pgState.held) { // physgun: wheel pushes/pulls the grabbed prop
+      pgState.dist = Math.max(1.6, Math.min(12, pgState.dist - e.deltaY * .004));
+      return;
+    }
     if (fp) {
       if (cfg.wheel === 'hotbar') { // cycle hotbar
         const s = invApi.state;

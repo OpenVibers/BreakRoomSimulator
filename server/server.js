@@ -81,6 +81,56 @@ function sys(text) { broadcast({ t: 'sys', text }); }
 
 const cars = {}; // id -> {x, z, ry, driver}
 
+// ---------- persistent world state: sleepers, car positions, physics props ----------
+// The break room is a place, not a session: people who leave stay behind as
+// nappers, cars stay where they were parked, spawned props survive restarts.
+const WORLD_FILE = path.join(__dirname, '..', 'data', 'world-state.json');
+const clampX = (n) => Math.max(-78, Math.min(148, n));
+const clampZ = (n) => Math.max(-58, Math.min(186, n));
+let savedWorld = {};
+try { savedWorld = JSON.parse(fs.readFileSync(WORLD_FILE, 'utf8')); } catch {}
+const sleepers = new Map(Object.entries(savedWorld.sleepers || {})); // key -> {key,name,vest,ap,guest,x,y,z,ry,ts}
+const props = new Map(Object.entries(savedWorld.props || {}));       // id -> {id,kind,p:[x,y,z],q:[x,y,z,w]}
+for (const [cid, c] of Object.entries(savedWorld.cars || {})) {
+  if (/^(car\d+|lambo)$/.test(cid) && Number.isFinite(c.x)) cars[cid] = { x: c.x, z: c.z, ry: c.ry || 0, driver: null };
+}
+let nextPhysId = [...props.keys()].reduce((m, id) => Math.max(m, Number(String(id).slice(2)) || 0), 0) + 1;
+function pruneSleepers() { // nappers expire after a week; keep the 60 most recent
+  const cutoff = Date.now() - 7 * 864e5;
+  for (const [k, s] of sleepers) if ((s.ts || 0) < cutoff) sleepers.delete(k);
+  while (sleepers.size > 60) {
+    const oldest = [...sleepers.entries()].sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0))[0][0];
+    sleepers.delete(oldest);
+  }
+}
+pruneSleepers();
+let worldDirty = false;
+function saveWorld() {
+  worldDirty = false;
+  const tmp = WORLD_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify({ sleepers: Object.fromEntries(sleepers), cars, props: Object.fromEntries(props) }));
+  fs.renameSync(tmp, WORLD_FILE); // atomic: a crash mid-write can't corrupt the state
+}
+setInterval(() => { if (worldDirty) saveWorld(); }, 10000);
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, () => {
+    try {
+      // snapshot everyone still connected as sleepers so a restart/deploy
+      // puts them right back where they were standing
+      for (const p of players.values()) {
+        sleepers.set(p.key, {
+          key: p.key, name: p.name, vest: p.vest, ap: p.ap || null, guest: !!p.guest,
+          x: +p.x.toFixed(2), y: +Math.max(0, Math.min(8, p.y)).toFixed(2), z: +p.z.toFixed(2), ry: +p.ry.toFixed(2), ts: Date.now(),
+        });
+      }
+      pruneSleepers();
+      saveWorld();
+      store.saveNow();
+    } catch {}
+    process.exit(0);
+  });
+}
+
 function pubState(p) {
   return { id: p.id, name: p.name, vest: p.vest, ap: p.ap || null, x: p.x, y: p.y, z: p.z, ry: p.ry, anim: p.anim, seat: p.seat, held: p.held };
 }
@@ -98,14 +148,22 @@ wss.on('connection', (ws, req) => {
   const id = nextId++;
   // spawn on the landscaped front walkway, facing the main entry — badge in!
   const p = {
-    id, key: user.key, name: user.name, vest: user.vest, admin: user.admin, ap: user.ap, ws,
+    id, key: user.key, name: user.name, vest: user.vest, admin: user.admin, ap: user.ap, guest: !!user.guest, ws,
     x: 105 + Math.random() * 3, y: 0, z: -1 + Math.random() * 2, ry: -Math.PI / 2,
     anim: 'idle', seat: null, held: null, lastChat: 0,
   };
+  // returning player: wake their napper and resume exactly where they dozed off
+  const slept = sleepers.get(user.key);
+  if (slept) {
+    p.x = slept.x; p.y = Math.max(0, Math.min(8, slept.y || 0)); p.z = slept.z; p.ry = slept.ry || 0;
+    sleepers.delete(user.key);
+    worldDirty = true;
+  }
   players.set(id, p);
 
   ws.send(JSON.stringify({
     t: 'init', id, you: pubState(p), guest: user.guest, admin: user.admin,
+    inv: user.inv, hotbar: user.hotbar,
     mapEdits,
     players: [...players.values()].filter(q => q.id !== id).map(pubState),
     c4: { a: c4.a.state(), b: c4.b.state() },
@@ -113,10 +171,15 @@ wss.on('connection', (ws, req) => {
     pong: { a: pong.a.state(), b: pong.b.state() },
     highscores: store.getHighscores(),
     cars,
+    sleepers: [...sleepers.values()],
+    props: [...props.values()],
     online: players.size,
   }));
+  if (slept) broadcast({ t: 'wake', key: user.key }, id);
   broadcast({ t: 'pj', p: pubState(p), online: players.size }, id);
-  sys(`👋 ${p.name} walked into the break room (${players.size} online)`);
+  sys(slept
+    ? `🌅 ${p.name} woke up from their nap (${players.size} online)`
+    : `👋 ${p.name} walked into the break room (${players.size} online)`);
 
   ws.on('message', (raw) => {
     let m;
@@ -133,7 +196,20 @@ wss.on('connection', (ws, req) => {
     chess.leave(p.key); broadcast({ t: 'chess', s: chess.state() });
     for (const t of [pong.a, pong.b]) if (t.leave(p.key)) broadcast({ t: 'pong', s: t.state() });
     broadcast({ t: 'pl', id, online: players.size });
-    sys(`🚪 ${p.name} went back to work`);
+    // leave a napper behind — unless the same account reconnected already
+    // (dupe-login boot fires this close AFTER the new connection is live)
+    const stillOn = [...players.values()].some(q => q.key === p.key);
+    if (!stillOn) {
+      const s = {
+        key: p.key, name: p.name, vest: p.vest, ap: p.ap || null, guest: !!user.guest,
+        x: +p.x.toFixed(2), y: +Math.max(0, Math.min(8, p.y)).toFixed(2), z: +p.z.toFixed(2), ry: +p.ry.toFixed(2), ts: Date.now(),
+      };
+      sleepers.set(p.key, s);
+      pruneSleepers();
+      worldDirty = true;
+      broadcast({ t: 'sleep', s });
+      sys(`💤 ${p.name} dozed off mid-break`);
+    }
   });
 });
 
@@ -253,7 +329,46 @@ function handle(p, m) {
         c.x = Math.max(-78, Math.min(148, m.x));
         c.z = Math.max(-58, Math.min(186, m.z));
         c.ry = m.ry;
+        worldDirty = true;
         broadcast({ t: 'car', id, op: 'state', x: c.x, z: c.z, ry: c.ry, driver: p.id }, p.id);
+      }
+      break;
+    }
+    case 'prop': { // sandbox physics props — spawn, owner-simulated motion, grab/drop, delete
+      if (m.op === 'spawn') {
+        const now = Date.now();
+        if (now - (p.lastSpawn || 0) < 250) return;
+        p.lastSpawn = now;
+        if (props.size >= 150) { if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'sys', text: '📦 Prop limit reached (150) — grab some with the physgun and press X to clear them.' })); return; }
+        const KINDS = ['box', 'crate', 'ball', 'barrel', 'melon', 'cone'];
+        if (!KINDS.includes(m.kind)) return;
+        const pos = Array.isArray(m.p) ? m.p.map(Number) : [];
+        if (pos.length !== 3 || !pos.every(Number.isFinite)) return;
+        const prop = { id: 'fp' + nextPhysId++, kind: m.kind, p: [clampX(pos[0]), Math.max(0, Math.min(30, pos[1])), clampZ(pos[2])], q: [0, 0, 0, 1] };
+        props.set(prop.id, prop);
+        worldDirty = true;
+        broadcast({ t: 'prop', op: 'add', prop, owner: p.id });
+      } else if (m.op === 'state') {
+        const pr = props.get(String(m.id));
+        if (!pr) return;
+        const pos = Array.isArray(m.p) ? m.p.map(Number) : [];
+        const q = Array.isArray(m.q) ? m.q.map(Number) : [];
+        if (pos.length !== 3 || !pos.every(Number.isFinite) || q.length !== 4 || !q.every(Number.isFinite)) return;
+        pr.p = [clampX(+pos[0].toFixed(2)), Math.max(-2, Math.min(40, +pos[1].toFixed(2))), clampZ(+pos[2].toFixed(2))];
+        pr.q = q.map(n => +n.toFixed(3));
+        worldDirty = true;
+        const v = Array.isArray(m.v) && m.v.length === 3 && m.v.every(Number.isFinite) ? m.v : null;
+        broadcast({ t: 'prop', op: 'state', id: pr.id, p: pr.p, q: pr.q, v, owner: p.id }, p.id);
+      } else if (m.op === 'grab' || m.op === 'drop') {
+        const pr = props.get(String(m.id));
+        if (!pr) return;
+        broadcast({ t: 'prop', op: m.op, id: pr.id, by: p.id }, p.id);
+      } else if (m.op === 'del') {
+        const pr = props.get(String(m.id));
+        if (!pr) return;
+        props.delete(pr.id);
+        worldDirty = true;
+        broadcast({ t: 'prop', op: 'del', id: pr.id });
       }
       break;
     }

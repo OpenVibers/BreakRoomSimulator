@@ -46,6 +46,7 @@ export const GRIPS = {
   wrench:  { p: [0, .05, .02], r: [-1.1, 0, 0] },
   tapegun: { p: [0, .02, .05], r: [-1.3, .3, 0] },
   banana:  { p: [0, .04, .05], r: [-1.9, .3, .6] },
+  physgun: { p: [0, .03, .06], r: [-1.45, 0, 0] },
   chips:   { p: [0, .04, .05], r: [-.5, 0, 0] },
   food:    { p: [0, .02, .06], r: [-.4, 0, 0] },
   candy:   { p: [0, .03, .05], r: [-.5, 0, 0] },
@@ -96,6 +97,21 @@ export function buildHeldMesh(item) {
     const b = new THREE.Mesh(new THREE.TorusGeometry(.09, .026, 8, 12, Math.PI * .9), new THREE.MeshStandardMaterial({ color: 0xf2d21f, roughness: .6 }));
     b.rotation.z = .6;
     g.add(b);
+  } else if (item === 'physgun') {
+    const glowM = new THREE.MeshStandardMaterial({ color: 0x35e0ff, emissive: 0x35e0ff, emissiveIntensity: 1.5, roughness: .3 });
+    const bodyM = new THREE.Mesh(new THREE.BoxGeometry(.09, .1, .34), dark);
+    g.add(bodyM);
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(.05, .15, .07), dark);
+    grip.position.set(0, -.1, .11); grip.rotation.x = .35;
+    g.add(grip);
+    for (const z of [-.05, -.13]) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(.06, .013, 6, 14), glowM);
+      ring.position.z = z;
+      g.add(ring);
+    }
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(.032, 8, 6), glowM);
+    tip.position.z = -.2;
+    g.add(tip);
   } else return null;
   return g;
 }

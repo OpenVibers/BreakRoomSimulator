@@ -128,3 +128,12 @@ body.touch #hotbar { bottom: calc(96px + env(safe-area-inset-bottom)); }
 .seg { display: flex; gap: 4px; }
 .segbtn { padding: 6px 14px; border-radius: 8px; border: 1px solid #3d5b7e; background: transparent; color: #9fb0c3; cursor: pointer; font-size: 13px; }
 .segbtn.sel { background: #ff9900; color: #1a1102; border-color: #ff9900; font-weight: 700; }
+
+/* ---------- sandbox spawn menu ---------- */
+#spawn-menu { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); background: rgba(12,16,22,.94); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; padding: 16px 18px; z-index: 30; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+.spawn-title { color: #dfe7f0; font-weight: 700; margin-bottom: 12px; }
+.spawn-title span { color: #8fa0b3; font-weight: 400; font-size: .82em; }
+#spawn-grid { display: grid; grid-template-columns: repeat(3, 96px); gap: 8px; }
+#spawn-grid button { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); border-radius: 10px; color: #dfe7f0; padding: 10px 6px; cursor: pointer; font-size: .78rem; font-family: inherit; }
+#spawn-grid button:hover { background: rgba(53,224,255,.14); border-color: #35e0ff; }
+#spawn-grid .ico { font-size: 1.5rem; display: block; margin-bottom: 4px; }

@@ -2669,6 +2669,37 @@ function streets(scene) {
   scene.add(mbPost);
   scene.add(box(.5, .3, .32, new THREE.MeshStandardMaterial({ color: 0x2e4d8a, roughness: .5 }), 27.4, 1.2, 172.2));
   inter({ id: 'home', type: 'home', x: 30, z: 174.2, r: 2.4, label: 'You made it — go relax 🏠' });
+  // a strange humming tool someone dropped on the shoulder of 172nd —
+  // finders keepers: this is the physgun
+  const pgGlow = new THREE.MeshStandardMaterial({ color: 0x35e0ff, emissive: 0x35e0ff, emissiveIntensity: 1.6, roughness: .3 });
+  const pgDark = new THREE.MeshStandardMaterial({ color: 0x1b2026, roughness: .4, metalness: .4 });
+  const pgG = new THREE.Group();
+  const pgBody = box(.5, .13, .15, pgDark, 0, .08, 0);
+  pgBody.rotation.z = .08;
+  pgG.add(pgBody);
+  for (const px of [.08, .2]) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(.085, .016, 6, 14), pgGlow);
+    ring.rotation.y = Math.PI / 2;
+    ring.position.set(px, .09, 0);
+    pgG.add(ring);
+  }
+  const pgTip = new THREE.Mesh(new THREE.SphereGeometry(.04, 8, 6), pgGlow);
+  pgTip.position.set(.28, .1, 0);
+  pgG.add(pgTip);
+  const pgHalo = new THREE.Mesh(new THREE.RingGeometry(.48, .68, 24), new THREE.MeshBasicMaterial({ color: 0x35e0ff, transparent: true, opacity: .55, side: THREE.DoubleSide, depthWrite: false }));
+  pgHalo.rotation.x = -Math.PI / 2;
+  pgHalo.position.y = .03;
+  pgG.add(pgHalo);
+  // faint light column so it can be spotted from down the road
+  const pgCol = new THREE.Mesh(new THREE.CylinderGeometry(.16, .3, 2.6, 10, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0x35e0ff, transparent: true, opacity: .13, side: THREE.DoubleSide, depthWrite: false }));
+  pgCol.position.y = 1.3;
+  pgG.add(pgCol);
+  pgG.position.set(130.9, 0, 41.5);
+  pgG.rotation.y = .7;
+  scene.add(pgG);
+  inter({ id: 'pk-physgun', type: 'pickup', x: 130.9, z: 41.5, r: 2.0, label: 'Whoa… some kind of gravity tool 🧲', data: { item: 'physgun' } });
+
   // a few yard trees
   for (const [tx, tz] of [[14, 146], [46, 158], [14, 168], [44, 174], [120, 150]]) {
     scene.add(cyl(.09, .12, 1.7, M.woodDark, tx, .85, tz, 8));

@@ -15,10 +15,15 @@ function loadJSON(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
 }
 
+const GUESTS_FILE = path.join(DATA_DIR, 'guests.json');
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
+
 const users = loadJSON(USERS_FILE, {});      // nameLower -> {name, salt, hash, vest, created, stats}
 let highscores = loadJSON(SCORES_FILE, []);  // [{name, score, when}]
-const tokens = new Map();                    // token -> nameLower (guests too)
-const guests = new Map();                    // nameLower -> {name, vest, guest:true}
+// guests and their login tokens persist to disk so a server restart doesn't
+// wipe anyone's session or a guest's inventory — the world should feel permanent
+const guests = new Map(Object.entries(loadJSON(GUESTS_FILE, {})));  // nameLower -> {name, vest, guest:true, inv, hotbar, ...}
+const tokens = new Map(Object.entries(loadJSON(SESSIONS_FILE, {}))); // token -> nameLower (guests too)
 
 let saveTimer = null;
 function saveSoon() {
@@ -27,7 +32,16 @@ function saveSoon() {
     saveTimer = null;
     fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
     fs.writeFileSync(SCORES_FILE, JSON.stringify(highscores, null, 2));
+    fs.writeFileSync(GUESTS_FILE, JSON.stringify(Object.fromEntries(guests), null, 1));
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(Object.fromEntries(tokens)));
   }, 250);
+}
+export function saveNow() {
+  clearTimeout(saveTimer); saveTimer = null;
+  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+  fs.writeFileSync(SCORES_FILE, JSON.stringify(highscores, null, 2));
+  fs.writeFileSync(GUESTS_FILE, JSON.stringify(Object.fromEntries(guests), null, 1));
+  fs.writeFileSync(SESSIONS_FILE, JSON.stringify(Object.fromEntries(tokens)));
 }
 
 function hashPass(pass, salt) {
@@ -65,12 +79,16 @@ export function guest() {
     key = name.toLowerCase();
   } while ((users[key] || guests.has(key)) && ++tries < 50);
   guests.set(key, { name, vest: 'yellow', guest: true, stats: { pongWins: 0, c4Wins: 0, chessWins: 0 } });
+  saveSoon();
   return { token: issueToken(key), user: publicUser(key) };
 }
 
 function issueToken(key) {
   const token = crypto.randomBytes(24).toString('hex');
+  // one live token per key: drop stale ones so sessions.json can't grow forever
+  for (const [t, k] of tokens) if (k === key) tokens.delete(t);
   tokens.set(token, key);
+  saveSoon();
   return token;
 }
 
@@ -102,12 +120,12 @@ export function setAppearance(key, ap) {
     if (Number.isInteger(ap[f]) && ap[f] >= 0 && ap[f] <= 16) clean[f] = ap[f];
   }
   u.ap = { ...(u.ap || {}), ...clean };
-  if (users[key]) saveSoon();
+  saveSoon();
   return u.ap;
 }
 
 const ITEM_IDS = ['chips','soda','candy','coffee','energy','water','food',
-  'paddle','broom','tapegun','tube','wrench','banana',
+  'paddle','broom','tapegun','tube','wrench','banana','physgun',
   'hat-cap','hat-beanie','hat-hardhat','vest-yellow','vest-orange','vest-green','vest-blue','vest-pink'];
 export function setInventory(key, inv, hotbar) {
   const u = users[key] || guests.get(key);
@@ -120,7 +138,7 @@ export function setInventory(key, inv, hotbar) {
   };
   u.inv = inv.map(cleanSlot);
   u.hotbar = hotbar.map(cleanSlot);
-  if (users[key]) saveSoon();
+  saveSoon();
   return true;
 }
 
@@ -130,7 +148,7 @@ export function setVest(key, vest) {
   const allowed = ['yellow', 'orange', 'green', 'blue', 'pink', 'none'];
   if (!allowed.includes(vest)) return;
   u.vest = vest;
-  if (users[key]) saveSoon();
+  saveSoon();
 }
 
 export function addWin(key, stat) {
@@ -138,7 +156,7 @@ export function addWin(key, stat) {
   if (!u) return;
   u.stats = u.stats || {};
   u.stats[stat] = (u.stats[stat] || 0) + 1;
-  if (users[key]) saveSoon();
+  saveSoon();
 }
 
 export function getHighscores() { return highscores; }

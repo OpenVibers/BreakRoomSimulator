@@ -7,7 +7,7 @@
 <title>Amazon Break Room Simulator</title>
 <link rel="stylesheet" href="css/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏓</text></svg>">
-<script type="importmap">{ "imports": { "three": "/vendor/three.module.js" } }</script>
+<script type="importmap">{ "imports": { "three": "/vendor/three.module.js", "cannon-es": "/vendor/cannon-es.js" } }</script>
 </head>
 <body>
 <canvas id="game"></canvas>
@@ -63,6 +63,12 @@
 
   <!-- hotbar -->
   <div id="hotbar"></div>
+
+  <!-- sandbox spawn menu (Q) -->
+  <div id="spawn-menu" class="hidden">
+    <div class="spawn-title">📦 Spawn a prop <span>(Q closes · physgun to move stuff)</span></div>
+    <div id="spawn-grid"></div>
+  </div>
 
   <!-- pong swing UI -->
   <div id="pong-ui" class="hidden">
