@@ -121,7 +121,7 @@ export function initPhysics(scene) {
   // car colliders are skipped here and tracked as kinematic bodies instead
   const carCols = new Set((W.cars || []).map(c => c.col));
   for (const c of W.colliders) {
-    if (carCols.has(c) || !Number.isFinite(c.x0)) continue;
+    if (carCols.has(c) || c.kn || !Number.isFinite(c.x0)) continue; // knockables don't stop cars
     const hw = (c.x1 - c.x0) / 2, hd = (c.z1 - c.z0) / 2;
     if (hw <= 0 || hd <= 0) continue;
     const b = new CANNON.Body({ type: CANNON.Body.STATIC, material: groundMat, shape: new CANNON.Box(new CANNON.Vec3(hw, 1.3, hd)) });
@@ -182,14 +182,22 @@ export function initPhysics(scene) {
       else if (throttle < 0) vFwd += (vFwd > .3 ? 14 : 5) * throttle * dt;
       vFwd -= vFwd * (handbrake ? 2.2 : .45) * dt; // drag
       vFwd = Math.max(-6, Math.min(top, vFwd));
-      vLat *= Math.pow(handbrake ? .6 : .02, dt);  // grip (handbrake = drift)
+      vLat *= Math.pow(handbrake ? .55 : .05, dt); // grip (a touch more slide)
       b.velocity.set(
         fwd.x * vFwd + right.x * vLat,
         b.velocity.y,
         fwd.z * vFwd + right.z * vLat,
       );
-      const sf = Math.min(Math.abs(vFwd) / 7, 1) * 1.9 * (vFwd < -.3 ? -1 : 1);
-      b.angularVelocity.y = steer * (handbrake ? 1.7 : 1) * sf;
+      // snappier steering that comes in earlier
+      const sf = Math.min(Math.abs(vFwd) / 5, 1) * 2.15 * (vFwd < -.3 ? -1 : 1);
+      b.angularVelocity.y = steer * (handbrake ? 1.8 : 1) * sf;
+      // arcade body language: lean out of corners, nose dip on the brakes,
+      // a little squat under throttle — springs on the angular velocity
+      const spdK = Math.min(Math.abs(vFwd) / (e.car.top || 17), 1);
+      const rollErr = steer * spdK * .17 - right.y;
+      const pitchErr = (throttle < -0.05 && vFwd > 1 ? -.06 : throttle > .05 ? .035 : 0) * spdK - fwd.y;
+      b.angularVelocity.x += (fwd.x * rollErr + right.x * pitchErr) * 26 * dt;
+      b.angularVelocity.z += (fwd.z * rollErr + right.z * pitchErr) * 26 * dt;
     }
     if (up.y < .95) { // self-righting: torque toward world-up
       const axis = up.cross(V(0, 1, 0));

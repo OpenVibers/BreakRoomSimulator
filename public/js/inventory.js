@@ -19,6 +19,7 @@ export const ITEMS = {
   wrench:  { name: 'Wrench',       icon: '🔧', type: 'melee' },
   banana:  { name: 'Banana',       icon: '🍌', type: 'melee' },
   physgun: { name: 'Physgun',      icon: '🧲', type: 'tool' },
+  flashlight: { name: 'Flashlight', icon: '🔦', type: 'tool' },
   'hat-cap':     { name: 'Cap',      icon: '🧢', type: 'clothes', ap: { hat: 1 } },
   'hat-beanie':  { name: 'Beanie',   icon: '👒', type: 'clothes', ap: { hat: 2 } },
   'hat-hardhat': { name: 'Hard hat', icon: '⛑️', type: 'clothes', ap: { hat: 3 } },
@@ -37,7 +38,10 @@ export function initInventory({ me, onEquip, onWear, onDropItem, toast }) {
   // load persisted
   if (Array.isArray(me.inv)) me.inv.forEach((s, i) => { if (i < 24 && s && ITEMS[s.id]) inv.slots[i] = { id: s.id, n: s.n || 1 }; });
   if (Array.isArray(me.hotbar)) me.hotbar.forEach((s, i) => { if (i < 6 && s && ITEMS[s.id]) inv.hotbar[i] = { id: s.id, n: s.n || 1 }; });
-  if (!me.inv && !me.hotbar) inv.hotbar[0] = { id: 'paddle', n: 1 }; // starter
+  if (!me.inv && !me.hotbar) { // starter kit: a light for the long nights, plus the classic
+    inv.hotbar[0] = { id: 'flashlight', n: 1 };
+    inv.hotbar[1] = { id: 'paddle', n: 1 };
+  }
 
   let saveT = null;
   const save = () => {

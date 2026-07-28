@@ -40,6 +40,18 @@ export function initLighting(scene, renderer, shadows = true) {
   sun.shadow.bias = -.0006;
   sun.shadow.normalBias = .35;
   scene.add(hemi, amb, sun, sun.target, moon, moon.target);
+  // interior fluorescents — the lights stay on all night (Bug44: the facility
+  // went pitch black after dark). World coords: cafeteria, security, lockers,
+  // service hallway.
+  for (const [x, y, z, i2, dist] of [
+    [67, 4.6, 55, .75, 30], [67, 4.6, 83, .75, 30], [83, 4.6, 55, .75, 30], [83, 4.6, 83, .75, 30],
+    [77, 4.4, -5, .65, 26], [75, 4.2, 24, .65, 26],
+    [55.2, 2.8, 55, .55, 22], [55.2, 2.8, 83, .55, 22],
+  ]) {
+    const pl = new THREE.PointLight(0xf6f4ea, i2, dist, 1.2);
+    pl.position.set(x, y, z);
+    scene.add(pl);
+  }
   enableShadows(scene); // everything built so far
 
   // stars, on a huge dome, visible only at night
@@ -98,6 +110,10 @@ export function initLighting(scene, renderer, shadows = true) {
     for (const g of W.nightGlow || []) {
       g.m.emissiveIntensity = g.day + (g.night - g.day) * (1 - d);
     }
+    for (const nl of W.nightLights || []) {
+      nl.light.intensity = nl.night * (1 - d);
+    }
+    W.dayFactor = d; // headlights/flashlight read this
     return t;
   }
 

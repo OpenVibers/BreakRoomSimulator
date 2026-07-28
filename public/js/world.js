@@ -15,7 +15,15 @@ export const W = { // world registry
   dynamic: {},         // tv/clock updaters
   camBlockers: [],     // meshes the 3rd-person camera must not clip through
   nightGlow: [],       // {m, day, night} emissive materials that wake up after dark
+  nightLights: [],     // {light, night} real lights that switch on after dark
+  knockables: [],      // trees/lamps/bushes cars can flatten (they respawn)
 };
+// register a crashable decoration: world-space object, hit circle, optional collider
+function knockable(obj, x, z, r, col = null) {
+  obj.userData.homePos = obj.position.clone();
+  obj.userData.homeQuat = obj.quaternion.clone();
+  W.knockables.push({ id: 'k' + W.knockables.length, obj, x, z, r, col, down: false });
+}
 const blocker = (m) => { W.camBlockers.push(m); return m; };
 
 const M = {}; // shared materials
@@ -51,7 +59,11 @@ const cyl = (rt, rb, h, mat, x = 0, y = 0, z = 0, seg = 14) => {
   m.position.set(x, y, z);
   return m;
 };
-const collide = (x, z, w, d, pad = 0) => W.colliders.push({ x0: x - w / 2 - pad, x1: x + w / 2 + pad, z0: z - d / 2 - pad, z1: z + d / 2 + pad });
+const collide = (x, z, w, d, pad = 0) => {
+  const c = { x0: x - w / 2 - pad, x1: x + w / 2 + pad, z0: z - d / 2 - pad, z1: z + d / 2 + pad };
+  W.colliders.push(c);
+  return c;
+};
 const inter = (o) => W.interactables.push(o);
 
 // ============================================================ ROOM SHELL
@@ -156,14 +168,16 @@ function shell(scene) {
   collide(38.1, -9.75, .6, 14.5); collide(38.1, 10.6, .6, 12.8);
   // close the height step between cafeteria (6.2) and the taller hall (7.2)
   scene.add(blocker(box(.3, 1.1, 34, M.white, 38, 6.75, 0)));
-  // double doors propped open at the passage (from trips) + flags + clock above
-  for (const [dz, ry] of [[-2.7, .95], [4.4, -.95]]) {
+  // double doors hinged at the opening jambs (z -2.5 / 4.2), swung open flat
+  // against the cafeteria side of the wall — they used to float mid-opening
+  // at odd angles (Bug43)
+  for (const [dz, ry] of [[-2.5, -1.89], [4.2, -1.25]]) {
     const leaf = box(.08, 2.3, 1.5, new THREE.MeshStandardMaterial({ color: 0xf2f1ec, roughness: .7 }), 0, 1.15, 0);
     leaf.add(box(.09, .5, .5, new THREE.MeshStandardMaterial({ color: 0x9aa4ae, roughness: .3, metalness: .5 }), 0, -.7, 0)); // kick plate
     const lg = new THREE.Group();
     lg.add(leaf);
-    leaf.position.set(0, 1.15, .75); // stand on the floor (0 sank it halfway in)
-    lg.position.set(38.2, 0, dz); lg.rotation.y = ry;
+    leaf.position.set(0, 1.15, .75); // hinge at the group origin
+    lg.position.set(37.85, 0, dz); lg.rotation.y = ry;
     scene.add(lg);
   }
   for (const [i, f] of ['fiji', 'puertorico', 'kyrgyzstan', 'spain'].entries()) {
@@ -1848,11 +1862,13 @@ function cooler(scene, x, z, kind) {
   inter({ id: `cooler-${z.toFixed(1)}`, type: 'vend', x: x - .9, z, r: 1.0, label: kind === 'food' ? 'Grab fresh food' : kind === 'redbull' ? 'Grab an energy drink' : 'Grab a drink', data: { kind } });
 }
 function snackWall(scene, x, z) {
+  // slat wall sits flush on the x=38 wall face (it used to float half a
+  // meter into the room — Bug43)
   const s = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 2.4), new THREE.MeshStandardMaterial({ map: TX.snackWallTexture(), roughness: .8 }));
-  s.rotation.y = -Math.PI / 2; s.position.set(x - .1, 1.55, z);
+  s.rotation.y = -Math.PI / 2; s.position.set(37.82, 1.55, z);
   scene.add(s);
-  collide(x, z, .5, 3.5);
-  inter({ id: `snack-${z}`, type: 'vend', x: x - .8, z, r: 1.2, label: 'Grab a snack', data: { kind: 'snack' } });
+  collide(38, z, .4, 3.5);
+  inter({ id: `snack-${z}`, type: 'vend', x: 37.1, z, r: 1.2, label: 'Grab a snack', data: { kind: 'snack' } });
 }
 function kiosk(scene, x, z, ry) {
   const g = new THREE.Group();
@@ -1979,7 +1995,9 @@ function decor(scene) {
   }
   // red LED clocks (from trips)
   W.dynamic.clocks = [];
-  for (const s of [{ x: -25, y: 3.9, z: -16.8, ry: 0 }, { x: 30, y: 3.4, z: 16.8, ry: Math.PI }, { x: 37.75, y: 3.9, z: 2.5, ry: -Math.PI / 2 }]) {
+  // east clock centered on the blue accent band over the locker passage
+  // (it used to hang half over the opening under a flag — Bug43)
+  for (const s of [{ x: -25, y: 3.9, z: -16.8, ry: 0 }, { x: 30, y: 3.4, z: 16.8, ry: Math.PI }, { x: 37.82, y: 3.65, z: .85, ry: -Math.PI / 2 }]) {
     const ck = TX.makeClock();
     ck.tex.anisotropy = 8; // the LED digits shimmered into moiré at oblique angles (Bug40)
     const m = new THREE.Mesh(new THREE.PlaneGeometry(.85, .32), new THREE.MeshBasicMaterial({ map: ck.tex }));
@@ -2327,8 +2345,12 @@ function exteriorEast(scene) {
         t.add(fol);
         t.position.set(bx2, 0, bz);
         scene.add(t);
+        knockable(t, bx2, bz, .7);
       } else if (i % 3 === 1) {
-        scene.add(new THREE.Mesh(new THREE.SphereGeometry(.42, 8, 6), new THREE.MeshStandardMaterial({ color: 0x3f6f35, roughness: .95 })).translateX(bx2).translateY(.3).translateZ(bz));
+        const sh = new THREE.Mesh(new THREE.SphereGeometry(.42, 8, 6), new THREE.MeshStandardMaterial({ color: 0x3f6f35, roughness: .95 }));
+        sh.position.set(bx2, .3, bz);
+        scene.add(sh);
+        knockable(sh, bx2, bz, .55);
       } else {
         for (let gj = 0; gj < 3; gj++) {
           const grass = new THREE.Mesh(new THREE.ConeGeometry(.3, .9, 5), new THREE.MeshStandardMaterial({ color: 0x6d8a4e, roughness: .95 }));
@@ -2337,7 +2359,8 @@ function exteriorEast(scene) {
         }
       }
     }
-    collide(109, s * 3.4, 22, 3.0); // stay on the path like a good visitor
+    // no bed colliders — drive through the landscaping if you must, the
+    // greenery just gets flattened and grows back (Bug45)
   }
   // trash barrel mid-path + Amazon Tours A-frames
   scene.add(cyl(.35, .3, .85, new THREE.MeshStandardMaterial({ color: 0x1d2126, roughness: .8 }), 104.5, .43, 1.1, 12));
@@ -2651,21 +2674,35 @@ function streets(scene) {
     g.closePath(); g.fill();
   });
   for (const [sx, sz] of [[130.5, 5.5], [130.5, 75.5]]) {
-    scene.add(cyl(.04, .05, 2.6, M.chrome, sx, 1.3, sz, 8));
+    const sg = new THREE.Group();
+    sg.add(cyl(.04, .05, 2.6, M.chrome, 0, 1.3, 0, 8));
     const s = new THREE.Mesh(new THREE.PlaneGeometry(.7, .7), new THREE.MeshBasicMaterial({ map: stopTex, transparent: true }));
-    s.position.set(sx, 2.3, sz); s.rotation.y = Math.PI / 2;
+    s.position.set(0, 2.3, 0); s.rotation.y = Math.PI / 2;
     const back = new THREE.Mesh(new THREE.PlaneGeometry(.7, .7), new THREE.MeshBasicMaterial({ map: stopBackTex, transparent: true }));
-    back.position.set(sx - .01, 2.3, sz); back.rotation.y = -Math.PI / 2;
-    scene.add(s, back);
+    back.position.set(-.01, 2.3, 0); back.rotation.y = -Math.PI / 2;
+    sg.add(s, back);
+    sg.position.set(sx, 0, sz);
+    scene.add(sg);
+    knockable(sg, sx, sz, .6); // no collider — mow it down, it comes back
   }
   // street lights along 172nd
   const lampM = new THREE.MeshStandardMaterial({ color: 0xfff3c9, emissive: 0xfff3c9, emissiveIntensity: .9 });
   W.nightGlow.push({ m: lampM, day: .25, night: 2.4 });
   for (const lz of [-30, 10, 50, 90, 126]) {
-    scene.add(cyl(.07, .09, 6.4, M.blackMetal, 132.2, 3.2, lz, 8));
-    scene.add(box(1.6, .08, .12, M.blackMetal, 133, 6.35, lz));
-    scene.add(box(.5, .1, .22, lampM, 133.7, 6.28, lz));
-    collide(132.2, lz, .3, .3);
+    const lamp = new THREE.Group();
+    lamp.add(cyl(.07, .09, 6.4, M.blackMetal, 0, 3.2, 0, 8));
+    lamp.add(box(1.6, .08, .12, M.blackMetal, .8, 6.35, 0));
+    lamp.add(box(.5, .1, .22, lampM, 1.5, 6.28, 0));
+    // real pool of light on the road after dark
+    const glow = new THREE.PointLight(0xffe9b0, 0, 16, 1.4);
+    glow.position.set(1.5, 6.1, 0);
+    lamp.add(glow);
+    W.nightLights.push({ light: glow, night: 1.5 });
+    lamp.position.set(132.2, 0, lz);
+    scene.add(lamp);
+    const c = collide(132.2, lz, .3, .3);
+    c.kn = true; // knockable: cars plow through, the pole tips over
+    knockable(lamp, 132.2, lz, .7, c);
   }
   // ---- Longhouse Trail houses ----
   const house = (hx, hz, ry, cBody, cRoof, isHome) => {
@@ -2819,13 +2856,18 @@ function streets(scene) {
   scene.add(pgG);
   inter({ id: 'pk-physgun', type: 'pickup', x: 130.9, z: 41.5, r: 2.0, label: 'Whoa… some kind of gravity tool 🧲', data: { item: 'physgun' } });
 
-  // a few yard trees
+  // a few yard trees — crashable, they grow back
   for (const [tx, tz] of [[14, 146], [46, 158], [14, 168], [44, 174], [120, 150]]) {
-    scene.add(cyl(.09, .12, 1.7, M.woodDark, tx, .85, tz, 8));
+    const tree = new THREE.Group();
+    tree.add(cyl(.09, .12, 1.7, M.woodDark, 0, .85, 0, 8));
     const fol = new THREE.Mesh(new THREE.SphereGeometry(1.25, 10, 8), new THREE.MeshStandardMaterial({ color: 0x4c7a3d, roughness: .9 }));
-    fol.position.set(tx, 2.6, tz); fol.scale.y = 1.25;
-    scene.add(fol);
-    collide(tx, tz, .4, .4);
+    fol.position.set(0, 2.6, 0); fol.scale.y = 1.25;
+    tree.add(fol);
+    tree.position.set(tx, 0, tz);
+    scene.add(tree);
+    const c = collide(tx, tz, .4, .4);
+    c.kn = true;
+    knockable(tree, tx, tz, 1.1, c);
   }
 
   // ---- the secret: a rusty container behind the smoke cage, something golden inside ----

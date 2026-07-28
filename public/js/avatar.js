@@ -47,6 +47,7 @@ export const GRIPS = {
   tapegun: { p: [0, .02, .05], r: [-1.3, .3, 0] },
   banana:  { p: [0, .04, .05], r: [-1.9, .3, .6] },
   physgun: { p: [0, .03, .06], r: [-1.45, 0, 0] },
+  flashlight: { p: [0, .03, .05], r: [-1.4, 0, 0] },
   chips:   { p: [0, .04, .05], r: [-.5, 0, 0] },
   food:    { p: [0, .02, .06], r: [-.4, 0, 0] },
   candy:   { p: [0, .03, .05], r: [-.5, 0, 0] },
@@ -97,6 +98,14 @@ export function buildHeldMesh(item) {
     const b = new THREE.Mesh(new THREE.TorusGeometry(.09, .026, 8, 12, Math.PI * .9), new THREE.MeshStandardMaterial({ color: 0xf2d21f, roughness: .6 }));
     b.rotation.z = .6;
     g.add(b);
+  } else if (item === 'flashlight') {
+    const bodyC = new THREE.Mesh(new THREE.CylinderGeometry(.035, .042, .22, 10), dark);
+    bodyC.rotation.x = Math.PI / 2;
+    g.add(bodyC);
+    const lens = new THREE.Mesh(new THREE.CylinderGeometry(.048, .04, .05, 10), new THREE.MeshStandardMaterial({ color: 0xfff6d8, emissive: 0xfff6d8, emissiveIntensity: 1.3 }));
+    lens.rotation.x = Math.PI / 2;
+    lens.position.z = -.13;
+    g.add(lens);
   } else if (item === 'physgun') {
     const glowM = new THREE.MeshStandardMaterial({ color: 0x35e0ff, emissive: 0x35e0ff, emissiveIntensity: 1.5, roughness: .3 });
     const bodyM = new THREE.Mesh(new THREE.BoxGeometry(.09, .1, .34), dark);

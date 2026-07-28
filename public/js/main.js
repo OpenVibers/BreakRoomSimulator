@@ -217,6 +217,11 @@ function start(token, user) {
   viewmodel.rotation.set(-.2, -.35, .15);
   camera.add(viewmodel);
   scene.add(camera);
+  // flashlight beam rides the camera so it points where you look
+  const torch = new THREE.SpotLight(0xfff6d8, 0, 30, .5, .45, 1.2);
+  torch.position.set(.25, -.2, .1);
+  torch.target.position.set(0, -.4, -12);
+  camera.add(torch, torch.target);
   let vmSwing = 0;
   // per-item viewmodel pose so props read correctly in first person (Bug10)
   const VM_POSE = {
@@ -336,6 +341,7 @@ function start(token, user) {
     const r = invApi.useSelected();
     if (!r) return;
     if (r.melee === 'physgun') { toast('🧲 Hold left-click to grab · wheel push/pull · R spin · X delete · Q spawns props'); return; }
+    if (r.melee === 'flashlight') { toast('🔦 Lights wherever you look — best after dark.'); return; }
     if (r.melee) { doSwing(); return; }
     if (r.def) {
       toast(`😋 ${r.def.icon} ${r.def.name} — delicious.`);
@@ -428,14 +434,16 @@ function start(token, user) {
         g.fillStyle = '#101418'; g.fillRect(0, 0, w, h);
         g.strokeStyle = '#2c343e'; g.lineWidth = 8; g.strokeRect(4, 4, w - 8, h - 8);
         g.textAlign = 'center';
-        g.fillStyle = '#8fa0b3'; g.font = '700 30px "Segoe UI", sans-serif';
-        g.fillText('YOU ARE ASSOCIATE', w / 2, 52);
-        g.fillStyle = '#ffb52e'; g.font = '700 84px "Consolas", monospace';
+        g.fillStyle = '#8fa0b3'; g.font = '700 26px "Segoe UI", sans-serif';
+        g.fillText(`YOU ARE ASSOCIATE Nº ${m.visitorNum}`, w / 2, 44);
+        g.fillStyle = '#5d6b7a'; g.font = '700 22px "Segoe UI", sans-serif';
+        g.fillText('TOTAL BADGE-INS, ALL TIME', w / 2, 84);
+        g.fillStyle = '#ffb52e'; g.font = '700 76px "Consolas", monospace';
         g.shadowColor = '#ffb52e'; g.shadowBlur = 18;
-        g.fillText('Nº ' + pad6(m.visitorNum), w / 2, 138);
+        g.fillText(pad6(m.stats?.joins ?? m.visitorNum), w / 2, 154);
         g.shadowBlur = 0;
-        g.fillStyle = '#5d6b7a'; g.font = '24px "Consolas", monospace';
-        g.fillText(`naps: ${m.stats?.naps ?? 0} · marks: ${m.stats?.marks ?? 0} · the lights stay on`, w / 2, 190);
+        g.fillStyle = '#5d6b7a'; g.font = '22px "Consolas", monospace';
+        g.fillText(`naps: ${m.stats?.naps ?? 0} · marks: ${m.stats?.marks ?? 0} · the lights stay on`, w / 2, 196);
       });
       const sg = new THREE.Group();
       const post = new THREE.Mesh(new THREE.CylinderGeometry(.05, .05, 2.0, 8), new THREE.MeshStandardMaterial({ color: 0x2a2f36, roughness: .6 }));
@@ -645,6 +653,23 @@ function start(token, user) {
     tagGroup.add(mesh);
   }
   net.on('tag', (m) => { if (m.op === 'add') addMark(m.tag); });
+
+  // ---------- knockables: mow down the landscaping, it grows back ----------
+  const knockAxis = new THREE.Vector3();
+  function knockIt(k, dx, dz, mine) {
+    if (k.down) return;
+    k.down = true;
+    k.t = 0;
+    k.dx = dx; k.dz = dz;
+    k.respawn = 24 + Math.random() * 8;
+    if (k.col) k.col.off = true;
+    if (mine) net.send({ t: 'knock', id: k.id, dx: +dx.toFixed(2), dz: +dz.toFixed(2) });
+    beep(150, .12, 'square', .1);
+  }
+  net.on('knock', (m) => {
+    const k = W.knockables.find(x => x.id === m.id);
+    if (k && Number.isFinite(m.dx) && Number.isFinite(m.dz)) knockIt(k, m.dx, m.dz, false);
+  });
 
   const tagForm = $('tag-form'), tagInput = $('tag-input');
   let tagOpen = false;
@@ -1300,6 +1325,65 @@ function start(token, user) {
       e.mesh.position.y = e.baseY + Math.sin(e.t * 2.2) * .06;
     }
 
+    // plow through knockables while driving fast enough
+    if (carState.driving) {
+      const ce = phys.cars.get(carState.driving.id);
+      const cv = ce.body.velocity;
+      const spd = Math.hypot(cv.x, cv.z);
+      if (spd > 3.5) {
+        for (const k of W.knockables) {
+          if (k.down) continue;
+          const dx = k.x - my.x, dz = k.z - my.z;
+          if (dx * dx + dz * dz < (k.r + 1.9) ** 2) knockIt(k, cv.x / spd, cv.z / spd, true);
+        }
+      }
+    }
+    for (const k of W.knockables) {
+      if (!k.down) continue;
+      k.t += dt;
+      const o = k.obj;
+      if (k.t < 1.1) { // topple with a wobble at the end
+        const p = Math.min(1, k.t / 1.1);
+        const fall = 1 - (1 - p) ** 2;
+        const wob = p > .75 ? Math.sin((p - .75) * 26) * .18 * (1 - p) : 0;
+        knockAxis.set(k.dz, 0, -k.dx).normalize();
+        o.quaternion.setFromAxisAngle(knockAxis, (Math.PI / 2 - .1) * fall + wob);
+        o.position.set(
+          o.userData.homePos.x + k.dx * fall * .6,
+          o.userData.homePos.y,
+          o.userData.homePos.z + k.dz * fall * .6,
+        );
+      } else if (k.t > k.respawn) { // grow back
+        const gr = (k.t - k.respawn) / .5;
+        o.quaternion.copy(o.userData.homeQuat);
+        o.position.copy(o.userData.homePos);
+        if (gr >= 1) {
+          k.down = false;
+          o.scale.setScalar(1);
+          if (k.col) k.col.off = false;
+        } else o.scale.setScalar(Math.max(.05, gr));
+      }
+    }
+
+    // headlights on driven cars, brighter after dark
+    for (const e2 of phys.cars.values()) {
+      const car = e2.car;
+      if (car.driver != null) {
+        if (!e2.hlLight) {
+          const sp = new THREE.SpotLight(0xfff2cf, 0, 36, .52, .5, 1.1);
+          sp.position.set(0, .85, 2.0);
+          const tgt = new THREE.Object3D();
+          tgt.position.set(0, .25, 15);
+          car.group.add(sp, tgt);
+          sp.target = tgt;
+          e2.hlLight = sp;
+        }
+        e2.hlLight.intensity = .25 + (1 - (W.dayFactor ?? 1)) * 3.4;
+      } else if (e2.hlLight) e2.hlLight.intensity = 0;
+    }
+    // flashlight follows your view
+    torch.intensity = my.held === 'flashlight' ? .5 + (1 - (W.dayFactor ?? 1)) * 3.6 : 0;
+
     daylight.update(my.x, my.z);
     W.dynamic.fires?.forEach(f => f.update(dt));
 
@@ -1319,7 +1403,7 @@ function start(token, user) {
     my, mg, scene, W, phys, input, renderer, daylight, teleport: (x, z, yaw) => { my.x = x; my.z = z; if (yaw !== undefined) my.yaw = yaw; sendPos(true); },
     action: doAction, nearest: () => nearest?.id || nearestSeat?.id || null,
     spawnProp, toggleSpawn, physgunGrab, physgunRelease, pgState, sleepers: sleeperMap, inv: invApi,
-    drops: worldDrops, dropItem: dropItemInWorld,
+    drops: worldDrops, dropItem: dropItemInWorld, knockIt,
   };
 
   addEventListener('wheel', (e) => {

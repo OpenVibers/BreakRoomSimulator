@@ -436,6 +436,12 @@ function handle(p, m) {
       }
       break;
     }
+    case 'knock': { // decorative crash relay — no state, knockables respawn
+      const kid = String(m.id || '').slice(0, 8);
+      if (!/^k\d+$/.test(kid) || ![m.dx, m.dz].every(Number.isFinite)) return;
+      broadcast({ t: 'knock', id: kid, dx: +m.dx.toFixed(2), dz: +m.dz.toFixed(2) }, p.id);
+      break;
+    }
     case 'tag': { // permanent marker on the floor — your mark stays forever
       const now = Date.now();
       if (now - (p.lastTag || 0) < 20000) {
