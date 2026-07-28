@@ -673,7 +673,9 @@ function securityLobby(scene) {
     const cs = ['#e40303', '#ff8c00', '#ffed00', '#008026', '#24408e', '#732982'];
     cs.forEach((c, i) => { g.fillStyle = c; g.beginPath(); g.moveTo(i * 40, 0); g.lineTo(i * 40 + 26, h / 2); g.lineTo(i * 40, h); g.lineTo(i * 40 + 40, h); g.lineTo(i * 40 + 66, h / 2); g.lineTo(i * 40 + 40, 0); g.fill(); });
   });
-  scene.add(box(.56, 1.02, 1.4, new THREE.MeshStandardMaterial({ map: chevTex, roughness: .7 }), 71.755, .51, -7.7));
+  // proud of the mural face by 4cm — coplanar with the desk front it z-fought
+  // into a rainbow moiré (Bug39)
+  scene.add(box(.64, 1.02, 1.4, new THREE.MeshStandardMaterial({ map: chevTex, roughness: .7 }), 71.75, .51, -7.7));
   const badgeTex = TX.ct(160, 200, (g, w, h) => {
     g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
     g.fillStyle = '#5a2a82'; g.font = '700 15px "Segoe UI", sans-serif'; g.textAlign = 'center';
@@ -682,7 +684,7 @@ function securityLobby(scene) {
     g.fillStyle = '#d8d8d8'; g.fillRect(30, 130, 100, 50);
   });
   const badgeP = new THREE.Mesh(new THREE.PlaneGeometry(.85, .9), new THREE.MeshBasicMaterial({ map: badgeTex }));
-  badgeP.rotation.y = Math.PI / 2; badgeP.position.set(72.04, .52, -4.4);
+  badgeP.rotation.y = Math.PI / 2; badgeP.position.set(72.09, .52, -4.4); // clear of the mural face
   scene.add(badgeP);
   const cap = new THREE.Mesh(new THREE.CylinderGeometry(.62, .62, 1.02, 16, 1, false, 0, Math.PI), muralM);
   cap.position.set(71.75, .51, -2.85);
@@ -1217,9 +1219,15 @@ function entrance(scene) {
   const mat = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 2), new THREE.MeshStandardMaterial({ color: 0x3a3d42, roughness: 1 }));
   mat.rotation.x = -Math.PI / 2; mat.position.set(-36.5, .012, 0);
   scene.add(mat);
-  const ban = new THREE.Mesh(new THREE.PlaneGeometry(.9, 2.1), new THREE.MeshStandardMaterial({ map: TX.togetherBannerTexture(), side: THREE.DoubleSide }));
-  ban.position.set(-36.2, 1.15, 2.9); ban.rotation.y = Math.PI / 4;
-  scene.add(ban);
+  // two front-facing planes so the lettering never mirrors
+  const banM = new THREE.MeshStandardMaterial({ map: TX.togetherBannerTexture() });
+  for (const flip of [0, Math.PI]) {
+    const ban = new THREE.Mesh(new THREE.PlaneGeometry(.9, 2.1), banM);
+    const a2 = Math.PI / 4 + flip;
+    ban.position.set(-36.2 + Math.sin(a2) * .005, 1.15, 2.9 + Math.cos(a2) * .005);
+    ban.rotation.y = a2;
+    scene.add(ban);
+  }
   scene.add(box(.9, .06, .3, M.blackMetal, -36.2, .03, 2.9));
   collide(-36.2, 2.9, .8, .4);
 }
@@ -1461,10 +1469,11 @@ function gamesCorner(scene) {
     scene.add(c);
     W.seats.push({ id: `loose-${x.toFixed(0)}`, x, z, y: .5, ry: ry + Math.PI, type: 'chair', exitX: x + Math.sin(ry), exitZ: z + Math.cos(ry) });
   }
-  // cornhole board leaning on wall (from trips)
+  // cornhole board leaning on wall (from trips) — top edge against the wall,
+  // feet in the room (it used to lean backwards, half-buried — Bug41)
   const ch = box(.62, .04, 1.2, M.wood, 0, 0, 0);
-  ch.position.set(-17.8, .6, -16.55); ch.rotation.x = -1.15;
-  const hole = cyl(.09, .09, .05, M.blackMetal, -17.8, 1.0, -16.42); hole.rotation.x = -1.15;
+  ch.position.set(-17.8, .55, -16.6); ch.rotation.x = 1.15;
+  const hole = cyl(.09, .09, .05, M.blackMetal, -17.8, .93, -16.79); hole.rotation.x = 1.15;
   scene.add(ch, hole);
 }
 
@@ -1901,9 +1910,10 @@ function lockers(scene, x, z, ry = 0) {
   const body = box(2.0, 1.9, .5, new THREE.MeshStandardMaterial({ color: 0xd6cfc0, roughness: .7 }), 0, .95, 0);
   g.add(body);
   W.camBlockers.push(body);
-  // sloped crown like the real locker banks
-  const crown = box(2.0, .06, .6, new THREE.MeshStandardMaterial({ color: 0xc7bfae, roughness: .7 }), 0, 2.0, -.04);
-  crown.rotation.x = -.4;
+  // sloped crown like the real locker banks: high at the back, sloping down
+  // over the doors (the old tilt pointed the slope the wrong way — Bug38)
+  const crown = box(2.0, .06, .6, new THREE.MeshStandardMaterial({ color: 0xc7bfae, roughness: .7 }), 0, 2.02, .04);
+  crown.rotation.x = .4;
   g.add(crown);
   const face = new THREE.Mesh(new THREE.PlaneGeometry(1.96, 1.86), new THREE.MeshStandardMaterial({ map: lockerTexShared, roughness: .7 }));
   face.position.set(0, .95, .26);
@@ -1968,8 +1978,9 @@ function decor(scene) {
   }
   // red LED clocks (from trips)
   W.dynamic.clocks = [];
-  for (const s of [{ x: -25, y: 3.9, z: -16.85, ry: 0 }, { x: 30, y: 3.4, z: 16.85, ry: Math.PI }, { x: 37.8, y: 3.9, z: 2.5, ry: -Math.PI / 2 }]) {
+  for (const s of [{ x: -25, y: 3.9, z: -16.8, ry: 0 }, { x: 30, y: 3.4, z: 16.8, ry: Math.PI }, { x: 37.75, y: 3.9, z: 2.5, ry: -Math.PI / 2 }]) {
     const ck = TX.makeClock();
+    ck.tex.anisotropy = 8; // the LED digits shimmered into moiré at oblique angles (Bug40)
     const m = new THREE.Mesh(new THREE.PlaneGeometry(.85, .32), new THREE.MeshBasicMaterial({ map: ck.tex }));
     m.position.set(s.x, s.y, s.z); m.rotation.y = s.ry;
     scene.add(m);
@@ -2034,43 +2045,45 @@ function serviceHallway(scene) {
   for (let i = -4; i <= 4; i++) scene.add(box(4.2, .05, .28, lin, i * 6.2, 3.08, -19.8));
 
   // ---- south side: microwave/coffee counter run (from trips) ----
+  // the corridor runs on the -z side; everything on this counter faces it
+  // (fronts used to point +z, straight into the break-room wall — Bug42)
   const counter = new THREE.Group();
   counter.add(box(24, .9, .7, new THREE.MeshStandardMaterial({ color: 0x6a6e73, roughness: .6, metalness: .3 }), 0, .45, 0));
   counter.add(box(24, .05, .78, new THREE.MeshStandardMaterial({ color: 0xd8d4c8, roughness: .4 }), 0, .93, 0));
-  counter.add(box(24, .05, .55, new THREE.MeshStandardMaterial({ color: 0x3d4045, roughness: .6 }), 0, 1.5, -.1)); // upper shelf
-  counter.position.set(-14, 0, -17.85);
+  counter.add(box(24, .05, .55, new THREE.MeshStandardMaterial({ color: 0x3d4045, roughness: .6 }), 0, 1.5, .1)); // upper shelf hugs the wall side
+  counter.position.set(-14, 0, -17.7);
   scene.add(counter);
-  collide(-14, -17.85, 24, .85);
+  collide(-14, -17.7, 24, .85);
   // microwaves on two tiers (instanced)
   const mwGeo = new THREE.BoxGeometry(.5, .32, .42);
   const mwM = new THREE.MeshStandardMaterial({ color: 0x1b1e22, roughness: .4 });
   const mws = new THREE.InstancedMesh(mwGeo, mwM, 16);
   const o = new THREE.Object3D();
   for (let i = 0; i < 16; i++) {
-    o.position.set(-25 + (i % 8) * 2.1, i < 8 ? 1.12 : 1.7, -17.9);
+    o.position.set(-25 + (i % 8) * 2.1, i < 8 ? 1.12 : 1.7, -17.75);
     o.updateMatrix(); mws.setMatrixAt(i, o.matrix);
   }
   scene.add(mws);
   inter({ id: 'hall-micro', type: 'micro', x: -14, z: -19, r: 2.6, label: 'Heat up lunch' });
-  // coffee machine + cup rack (from trips)
-  scene.add(box(.55, .85, .5, new THREE.MeshStandardMaterial({ color: 0x17181c, roughness: .35 }), -27.3, 1.35, -17.9));
-  scene.add(box(.3, .2, .02, new THREE.MeshStandardMaterial({ color: 0x2a72b8, roughness: .2, emissive: 0x1a4a80, emissiveIntensity: .4 }), -27.35, 1.55, -17.62));
-  for (let i = 0; i < 3; i++) scene.add(cyl(.055, .04, .3, new THREE.MeshStandardMaterial({ color: 0xf2f0ea, roughness: .5 }), -26.6 + i * .18, 1.85, -17.9, 8));
+  // coffee machine + cup rack (from trips) — display toward the corridor
+  scene.add(box(.55, .85, .5, new THREE.MeshStandardMaterial({ color: 0x17181c, roughness: .35 }), -27.3, 1.35, -17.75));
+  scene.add(box(.3, .2, .02, new THREE.MeshStandardMaterial({ color: 0x2a72b8, roughness: .2, emissive: 0x1a4a80, emissiveIntensity: .4 }), -27.35, 1.55, -18.03));
+  for (let i = 0; i < 3; i++) scene.add(cyl(.055, .04, .3, new THREE.MeshStandardMaterial({ color: 0xf2f0ea, roughness: .5 }), -26.6 + i * .18, 1.85, -17.75, 8));
   inter({ id: 'hall-coffee', type: 'coffee', x: -27, z: -19, r: 1.6, label: 'Brew a coffee' });
   // ice/water machine + chest freezer + caution cone (from trips)
-  scene.add(box(1.0, 1.7, .8, new THREE.MeshStandardMaterial({ color: 0xb9bdc2, roughness: .3, metalness: .5 }), .8, .85, -17.9));
-  scene.add(box(.5, .3, .1, new THREE.MeshStandardMaterial({ color: 0x14181d }), .8, .8, -17.44));
-  collide(.8, -17.9, 1.1, .9);
+  scene.add(box(1.0, 1.7, .8, new THREE.MeshStandardMaterial({ color: 0xb9bdc2, roughness: .3, metalness: .5 }), .8, .85, -17.75));
+  scene.add(box(.5, .3, .1, new THREE.MeshStandardMaterial({ color: 0x14181d }), .8, .8, -18.21)); // dispenser on the corridor side
+  collide(.8, -17.75, 1.1, .9);
   inter({ id: 'hall-water', type: 'water', x: .8, z: -19, r: 1.4, label: 'Get ice water' });
-  scene.add(box(1.5, .85, .7, new THREE.MeshStandardMaterial({ color: 0xf2f1ec, roughness: .5 }), 2.6, .43, -17.9));
-  collide(2.6, -17.9, 1.6, .8);
-  const cone = cyl(.03, .16, .5, new THREE.MeshStandardMaterial({ color: 0xf2c521, roughness: .6 }), 3.9, .25, -18.6, 8);
+  scene.add(box(1.5, .85, .7, new THREE.MeshStandardMaterial({ color: 0xf2f1ec, roughness: .5 }), 2.6, .43, -17.75));
+  collide(2.6, -17.75, 1.6, .8);
+  const cone = cyl(.03, .16, .5, new THREE.MeshStandardMaterial({ color: 0xf2c521, roughness: .6 }), 3.9, .25, -18.7, 8);
   scene.add(cone);
-  // dark vending pair with glowing dots further along
+  // dark vending pair, snug to the wall, glowing fronts toward the corridor
   for (const vx of [6.5, 7.7]) {
-    scene.add(blocker(box(1.1, 1.9, .8, new THREE.MeshStandardMaterial({ color: 0x14181d, roughness: .5 }), vx, .95, -17.95)));
-    scene.add(box(.7, 1.2, .02, new THREE.MeshStandardMaterial({ color: 0x1c62d1, emissive: 0x1c62d1, emissiveIntensity: .7, roughness: .4 }), vx, 1.05, -17.53));
-    collide(vx, -17.95, 1.15, .85);
+    scene.add(blocker(box(1.1, 1.9, .8, new THREE.MeshStandardMaterial({ color: 0x14181d, roughness: .5 }), vx, .95, -17.7)));
+    scene.add(box(.7, 1.2, .02, new THREE.MeshStandardMaterial({ color: 0x1c62d1, emissive: 0x1c62d1, emissiveIntensity: .7, roughness: .4 }), vx, 1.05, -18.12));
+    collide(vx, -17.7, 1.15, .85);
   }
 
   // ---- north side: racks, boards, bins, storage door, bathrooms ----
@@ -2333,14 +2346,21 @@ function exteriorEast(scene) {
     g.fillStyle = '#fff'; g.font = '700 26px "Segoe UI", sans-serif'; g.textAlign = 'center';
     g.fillText('Amazon', w / 2, 90); g.fillText('Tours', w / 2, 122);
   });
+  const toursBackM = new THREE.MeshStandardMaterial({ color: 0x1a1c20, roughness: .8, side: THREE.BackSide });
   for (const [ax, az, ry] of [[99, 2.2, .3], [113.5, -2.2, -.2]]) {
     const a = new THREE.Group();
     for (const s2 of [-1, 1]) {
-      const p = new THREE.Mesh(new THREE.PlaneGeometry(.85, 1.0), new THREE.MeshStandardMaterial({ map: toursTex, side: THREE.DoubleSide }));
-      p.rotation.x = -s2 * .22; // tops lean together into the A
+      // text plane faces OUTWARD only; a plain dark plane backs the inside
+      // (a DoubleSide plane mirrored the lettering from behind — Bug37)
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(.85, 1.0), new THREE.MeshStandardMaterial({ map: toursTex }));
+      p.rotation.x = -s2 * .22;
+      p.rotation.y = s2 === 1 ? 0 : Math.PI;
       p.position.z = s2 * .12;
       p.position.y = .5;
-      a.add(p);
+      const inner = new THREE.Mesh(new THREE.PlaneGeometry(.85, 1.0), toursBackM);
+      inner.rotation.copy(p.rotation); // same plane, back face only
+      inner.position.set(0, .5, s2 * .118);
+      a.add(p, inner);
     }
     a.position.set(ax, 0, az); a.rotation.y = ry;
     scene.add(a);
@@ -2606,9 +2626,15 @@ function streets(scene) {
   const signPost = (x, z) => { scene.add(cyl(.04, .05, 3, M.chrome, x, 1.5, z, 8)); };
   signPost(131.4, 131.2);
   for (const [t, y, ry] of [['172nd St NE', 2.8, 0], ['51st Ave NE', 2.45, Math.PI / 2]]) {
-    const b = new THREE.Mesh(new THREE.PlaneGeometry(1.7, .32), new THREE.MeshBasicMaterial({ map: bladeTex(t), side: THREE.DoubleSide }));
-    b.position.set(131.4, y, 131.2); b.rotation.y = ry;
-    scene.add(b);
+    // readable from both sides: two front-facing planes, never mirrored
+    const bm = new THREE.MeshBasicMaterial({ map: bladeTex(t) });
+    for (const flip of [0, Math.PI]) {
+      const b = new THREE.Mesh(new THREE.PlaneGeometry(1.7, .32), bm);
+      const a2 = ry + flip; // nudge each face along its own normal (no self z-fight)
+      b.position.set(131.4 + Math.sin(a2) * .006, y, 131.2 + Math.cos(a2) * .006);
+      b.rotation.y = a2;
+      scene.add(b);
+    }
   }
   const stopTex = TX.ct(128, 128, (g, w, h) => {
     g.fillStyle = '#c22127'; g.beginPath();
@@ -2616,11 +2642,20 @@ function streets(scene) {
     g.closePath(); g.fill();
     g.fillStyle = '#fff'; g.font = '900 40px Arial'; g.textAlign = 'center'; g.fillText('STOP', w / 2, h / 2 + 14);
   });
+  // plain gray octagon for the sign backs — real signs aren't double-sided,
+  // and a DoubleSide plane mirrored the STOP text (Bug36)
+  const stopBackTex = TX.ct(128, 128, (g, w, h) => {
+    g.fillStyle = '#8d9298'; g.beginPath();
+    for (let i = 0; i < 8; i++) { const a = Math.PI / 8 + i * Math.PI / 4; const px = w / 2 + Math.cos(a) * 58, py = h / 2 + Math.sin(a) * 58; i ? g.lineTo(px, py) : g.moveTo(px, py); }
+    g.closePath(); g.fill();
+  });
   for (const [sx, sz] of [[130.5, 5.5], [130.5, 75.5]]) {
     scene.add(cyl(.04, .05, 2.6, M.chrome, sx, 1.3, sz, 8));
-    const s = new THREE.Mesh(new THREE.PlaneGeometry(.7, .7), new THREE.MeshBasicMaterial({ map: stopTex, transparent: true, side: THREE.DoubleSide }));
+    const s = new THREE.Mesh(new THREE.PlaneGeometry(.7, .7), new THREE.MeshBasicMaterial({ map: stopTex, transparent: true }));
     s.position.set(sx, 2.3, sz); s.rotation.y = Math.PI / 2;
-    scene.add(s);
+    const back = new THREE.Mesh(new THREE.PlaneGeometry(.7, .7), new THREE.MeshBasicMaterial({ map: stopBackTex, transparent: true }));
+    back.position.set(sx - .01, 2.3, sz); back.rotation.y = -Math.PI / 2;
+    scene.add(s, back);
   }
   // street lights along 172nd
   const lampM = new THREE.MeshStandardMaterial({ color: 0xfff3c9, emissive: 0xfff3c9, emissiveIntensity: .9 });
@@ -2750,9 +2785,13 @@ function streets(scene) {
     g.fillText('the good car is', w / 2, 54);
     g.fillText('behind the cage 🔑', w / 2, 74);
   });
-  const hint = new THREE.Mesh(new THREE.PlaneGeometry(.8, .4), new THREE.MeshBasicMaterial({ map: hintTex, side: THREE.DoubleSide }));
-  hint.rotation.y = Math.PI / 2; hint.position.set(45.85, 1.35, 95);
-  scene.add(hint);
+  const hintM = new THREE.MeshBasicMaterial({ map: hintTex });
+  for (const flip of [0, Math.PI]) { // readable from both sides, never mirrored
+    const hint = new THREE.Mesh(new THREE.PlaneGeometry(.8, .4), hintM);
+    hint.rotation.y = Math.PI / 2 + flip;
+    hint.position.set(45.85 + (flip ? -.005 : .005), 1.35, 95);
+    scene.add(hint);
+  }
 }
 
 export function buildWorld(scene) {

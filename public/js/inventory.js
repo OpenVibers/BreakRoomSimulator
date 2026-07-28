@@ -27,7 +27,7 @@ export const ITEMS = {
   'vest-blue':   { name: 'Blue vest',   icon: '🟦', type: 'clothes', vest: 'blue' },
 };
 
-export function initInventory({ me, onEquip, onWear, toast }) {
+export function initInventory({ me, onEquip, onWear, onDropItem, toast }) {
   const inv = {
     slots: new Array(24).fill(null),   // {id, n}
     hotbar: new Array(6).fill(null),
@@ -121,6 +121,35 @@ export function initInventory({ me, onEquip, onWear, toast }) {
   addEventListener('pointermove', moveGhost);
   addEventListener('pointerup', onUp);
 
+  // ---------- dropping (minecraft style) ----------
+  // right-click a slot to toss one on the floor; H (wired in main) drops from
+  // the selected hotbar slot
+  function removeOne(ref) {
+    const s = ref.arr[ref.i];
+    if (!s) return null;
+    const id = s.id;
+    s.n--;
+    if (s.n <= 0) {
+      ref.arr[ref.i] = null;
+      if (ref.arr === inv.hotbar && ref.i === inv.sel) { onEquip(null); inv.sel = -1; }
+    }
+    renderHotbar(); renderInv(); save();
+    return id;
+  }
+  function dropSelected() {
+    if (inv.sel === -1) return null;
+    return removeOne({ arr: inv.hotbar, i: inv.sel });
+  }
+  const onCtx = (e) => {
+    const ref = getRef(e.target.closest('.slot'));
+    if (!ref || !ref.arr[ref.i]) return;
+    e.preventDefault();
+    const id = removeOne(ref);
+    if (id) { onDropItem?.(id); beep(340, .05, 'sine', .07); }
+  };
+  invEl.addEventListener('contextmenu', onCtx);
+  hotbarEl.addEventListener('contextmenu', onCtx);
+
   // ---------- API ----------
   function findRoom(id) {
     const stack = ITEMS[id].type === 'food';
@@ -201,5 +230,5 @@ export function initInventory({ me, onEquip, onWear, toast }) {
     if (el?.dataset?.bar !== undefined) select(+el.dataset.bar);
   });
 
-  return { add, select, useSelected, toggle, selectedItem, restore, state: inv };
+  return { add, select, useSelected, dropSelected, toggle, selectedItem, restore, state: inv };
 }

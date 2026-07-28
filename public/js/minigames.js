@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { net } from './net.js';
 import { chessMoves } from './chess-rules.js';
+import { uiFocus } from './input.js';
 
 // ---------- tiny synth ----------
 let actx = null;
@@ -268,6 +269,7 @@ export function initMinigames(W, me, toast) {
   let arcade = null;
   function openArcade() {
     arcadeUI.classList.remove('hidden');
+    uiFocus('arcade', true); // free the mouse — the paddle tracks the cursor
     arcade = {
       px: 150, pw: 64, bx: 180, by: 380, vx: 2.6, vy: -3.6,
       bricks: [], score: 0, lives: 3, over: false, started: false, t: 0,
@@ -281,6 +283,7 @@ export function initMinigames(W, me, toast) {
     if (arcade && submit && arcade.score > 0) net.send({ t: 'arcade', score: arcade.score });
     arcade = null;
     arcadeUI.classList.add('hidden');
+    uiFocus('arcade', false);
   }
   document.getElementById('btn-arcade-quit').addEventListener('click', () => closeArcade(true));
   addEventListener('keydown', (e) => { if (arcade && e.code === 'Escape') closeArcade(true); });

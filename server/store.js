@@ -124,7 +124,7 @@ export function setAppearance(key, ap) {
   return u.ap;
 }
 
-const ITEM_IDS = ['chips','soda','candy','coffee','energy','water','food',
+export const ITEM_IDS = ['chips','soda','candy','coffee','energy','water','food',
   'paddle','broom','tapegun','tube','wrench','banana','physgun',
   'hat-cap','hat-beanie','hat-hardhat','vest-yellow','vest-orange','vest-green','vest-blue','vest-pink'];
 export function setInventory(key, inv, hotbar) {

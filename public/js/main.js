@@ -189,6 +189,7 @@ function start(token, user) {
   // ---------- inventory / equipment ----------
   const invApi = initInventory({
     me,
+    onDropItem: (id) => dropItemInWorld(id),
     onEquip: (item) => {
       my.held = item;
       myAvatar.setHeld(item);
@@ -349,6 +350,7 @@ function start(token, user) {
     else if (e.code === 'KeyF') useKey();
     else if (e.code === 'KeyQ') toggleSpawn();
     else if (e.code === 'KeyG') { e.preventDefault(); openTag(); }
+    else if (e.code === 'KeyH') { const dropId = invApi.dropSelected(); if (dropId) { dropItemInWorld(dropId); beep(340, .05, 'sine', .07); } }
     else if (e.code === 'KeyX' && pgState.held && !pgState.held.isCar) net.send({ t: 'prop', op: 'del', id: pgState.held.id });
   });
 
@@ -413,6 +415,7 @@ function start(token, user) {
     (m.sleepers || []).forEach(addSleeper);
     (m.props || []).forEach(pr => phys.add(pr));
     (m.tags || []).forEach(addMark);
+    (m.drops || []).forEach(addWorldDrop);
     // retro associate counter by the front walkway — proof the place remembers
     if (m.visitorNum) {
       const pad6 = (v) => String(Math.min(v, 999999)).padStart(6, '0');
@@ -441,7 +444,7 @@ function start(token, user) {
       scene.add(sg);
       W.colliders.push({ x0: 102.7, x1: 103.3, z0: 6.1, z1: 6.7 });
       addChat(`📟 You are associate №${m.visitorNum}. The break room remembers everyone.`, 'sys');
-      addChat('🖊️ Press G to leave a permanent mark · Q to spawn props · the 🧲 is out on 172nd St.', 'sys');
+      addChat('🖊️ G leaves a permanent mark · Q spawns props · H (or right-click a slot) drops items · the 🧲 is out on 172nd St.', 'sys');
     }
     if (me.admin && !editor) editor = initEditor({ scene, camera, props, toast });
     $('online-count').textContent = m.online;
@@ -556,6 +559,47 @@ function start(token, user) {
   }
   net.on('sleep', (m) => addSleeper(m.s));
   net.on('wake', (m) => removeSleeper(m.key));
+
+  // ---------- dropped items on the floor (minecraft style) ----------
+  const worldDrops = new Map(); // id -> {group, mesh, inter, t}
+  function dropItemInWorld(id) {
+    const fx = -Math.sin(my.yaw), fz = -Math.cos(my.yaw);
+    net.send({ t: 'drop', op: 'add', item: id, n: 1, x: +(my.x + fx * 1.3).toFixed(2), y: .35, z: +(my.z + fz * 1.3).toFixed(2) });
+  }
+  function addWorldDrop(d) {
+    removeWorldDrop(d.id);
+    const mesh = buildHeldMesh(d.item);
+    if (!mesh) return;
+    const group = new THREE.Group();
+    mesh.scale.setScalar(1.4);
+    group.add(mesh);
+    const sh = new THREE.Mesh(new THREE.CircleGeometry(.16, 12), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: .2, depthWrite: false }));
+    sh.rotation.x = -Math.PI / 2;
+    sh.position.y = .012;
+    group.add(sh);
+    group.position.set(d.x, 0, d.z);
+    scene.add(group);
+    const def = ITEMS[d.item];
+    const it = { id: `drop-${d.id}`, type: 'dropitem', x: d.x, z: d.z, r: 1.2, label: `Pick up ${def.icon} ${def.name}${d.n > 1 ? ' ×' + d.n : ''}`, data: { drop: d.id } };
+    W.interactables.push(it);
+    worldDrops.set(d.id, { group, mesh, inter: it, t: Math.random() * 6, baseY: Math.max(.3, d.y || .35) });
+  }
+  function removeWorldDrop(id) {
+    const e = worldDrops.get(id);
+    if (!e) return;
+    scene.remove(e.group);
+    const i = W.interactables.indexOf(e.inter);
+    if (i !== -1) W.interactables.splice(i, 1);
+    worldDrops.delete(id);
+  }
+  net.on('drop', (m) => {
+    if (m.op === 'add') addWorldDrop(m.d);
+    else if (m.op === 'del') { removeWorldDrop(m.id); if (m.taker === myId) beep(600, .06, 'sine', .1); }
+    else if (m.op === 'grant') {
+      if (invApi.add(m.item, m.n)) toast(`${ITEMS[m.item].icon} ${ITEMS[m.item].name} → inventory`);
+      else dropItemInWorld(m.item); // full backpack: put it back on the floor
+    }
+  });
 
   // ---------- permanent marks (G): sharpie on the floor, forever ----------
   const tagGroup = new THREE.Group();
@@ -926,6 +970,9 @@ function start(token, user) {
             beep(600, .06, 'sine', .1);
           }
           return;
+        case 'dropitem':
+          net.send({ t: 'drop', op: 'take', id: nearest.data.drop });
+          return;
         case 'micro':
           toast('🍜 *microwave hums for 90 seconds*', 3200);
           beep(980, .5, 'sine', .06);
@@ -1210,6 +1257,12 @@ function start(token, user) {
       s.zz.position.y = .7 + Math.sin(s.t * 1.6) * .07;
       s.zz.material.opacity = .65 + Math.sin(s.t * 1.6) * .3;
     }
+    // dropped items spin and bob, minecraft style
+    for (const e of worldDrops.values()) {
+      e.t += dt;
+      e.mesh.rotation.y += dt * 1.6;
+      e.mesh.position.y = e.baseY + Math.sin(e.t * 2.2) * .06;
+    }
 
     scanInteractables();
     mg.update(dt);
@@ -1227,6 +1280,7 @@ function start(token, user) {
     my, mg, scene, W, phys, input, teleport: (x, z, yaw) => { my.x = x; my.z = z; if (yaw !== undefined) my.yaw = yaw; sendPos(true); },
     action: doAction, nearest: () => nearest?.id || nearestSeat?.id || null,
     spawnProp, toggleSpawn, physgunGrab, physgunRelease, pgState, sleepers: sleeperMap, inv: invApi,
+    drops: worldDrops, dropItem: dropItemInWorld,
   };
 
   addEventListener('wheel', (e) => {
@@ -1255,13 +1309,15 @@ function start(token, user) {
   // ---------- ambient updates ----------
   // walking away abandons a board seat
   setInterval(() => {
+    // rotated-cafeteria anchors keep group-local x/z — world coords live in
+    // wx/wz (comparing against local coords ejected players instantly)
     for (const id of ['a', 'b']) {
       const s = mg.c4[id], a = W.anchors[`c4-${id}`];
-      if (s && a && s.seats.includes(me.name) && Math.hypot(my.x - a.x, my.z - a.z) > 4.5)
+      if (s && a && s.seats.includes(me.name) && Math.hypot(my.x - (a.wx ?? a.x), my.z - (a.wz ?? a.z)) > 4.5)
         net.send({ t: 'c4', id, op: 'leave' });
     }
     const cs = mg.chess, ca = W.anchors.chess;
-    if (cs && ca && cs.seats.includes(me.name) && Math.hypot(my.x - ca.x, my.z - ca.z) > 4.5)
+    if (cs && ca && cs.seats.includes(me.name) && Math.hypot(my.x - (ca.wx ?? ca.x), my.z - (ca.wz ?? ca.z)) > 4.5)
       net.send({ t: 'chess', op: 'leave' });
   }, 1500);
 

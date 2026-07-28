@@ -104,6 +104,9 @@ for (const [cid, c] of Object.entries(savedWorld.cars || {})) {
   }
 }
 let nextPhysId = [...props.keys()].reduce((m, id) => Math.max(m, Number(String(id).slice(2)) || 0), 0) + 1;
+// dropped items lying on the floor — minecraft style, persisted like all else
+const drops = new Map(Object.entries(savedWorld.drops || {})); // id -> {id, item, n, x, y, z}
+let nextDropId = [...drops.keys()].reduce((m, id) => Math.max(m, Number(String(id).slice(1)) || 0), 0) + 1;
 // permanent marker tags — the "I was here" layer. They outlive everyone.
 const tags = Array.isArray(savedWorld.tags) ? savedWorld.tags : [];
 let nextTagId = tags.reduce((m, t) => Math.max(m, Number(String(t.id).slice(1)) || 0), 0) + 1;
@@ -122,7 +125,7 @@ let worldDirty = false;
 function saveWorld() {
   worldDirty = false;
   const tmp = WORLD_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify({ sleepers: Object.fromEntries(sleepers), cars, props: Object.fromEntries(props), tags, stats }));
+  fs.writeFileSync(tmp, JSON.stringify({ sleepers: Object.fromEntries(sleepers), cars, props: Object.fromEntries(props), drops: Object.fromEntries(drops), tags, stats }));
   fs.renameSync(tmp, WORLD_FILE); // atomic: a crash mid-write can't corrupt the state
 }
 setInterval(() => { if (worldDirty) saveWorld(); }, 10000);
@@ -182,6 +185,7 @@ wss.on('connection', (ws, req) => {
     inv: user.inv, hotbar: user.hotbar,
     visitorNum: stats.joins, stats: { joins: stats.joins, naps: stats.naps, marks: tags.length },
     tags,
+    drops: [...drops.values()],
     mapEdits,
     players: [...players.values()].filter(q => q.id !== id).map(pubState),
     c4: { a: c4.a.state(), b: c4.b.state() },
@@ -407,6 +411,31 @@ function handle(p, m) {
     case 'gate': // badge-gate animation relay so everyone sees paddles open
       broadcast({ t: 'gate', id: String(m.id || '').slice(0, 20) });
       break;
+    case 'drop': { // items tossed on the floor, minecraft style
+      if (m.op === 'add') {
+        const now = Date.now();
+        if (now - (p.lastDrop || 0) < 250) return;
+        p.lastDrop = now;
+        if (!store.ITEM_IDS.includes(m.item)) return;
+        if (drops.size >= 200) { if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'sys', text: '🎒 The floor is covered in stuff already — pick something up first.' })); return; }
+        const n = Math.max(1, Math.min(99, Math.floor(Number(m.n) || 1)));
+        const d = {
+          id: 'd' + nextDropId++, item: m.item, n,
+          x: clampX(+(+m.x || 0).toFixed(2)), y: Math.max(.05, Math.min(8, +(+m.y || 0).toFixed(2))), z: clampZ(+(+m.z || 0).toFixed(2)),
+        };
+        drops.set(d.id, d);
+        worldDirty = true;
+        broadcast({ t: 'drop', op: 'add', d });
+      } else if (m.op === 'take') {
+        const d = drops.get(String(m.id));
+        if (!d) return;
+        drops.delete(d.id);
+        worldDirty = true;
+        broadcast({ t: 'drop', op: 'del', id: d.id, taker: p.id });
+        if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'drop', op: 'grant', item: d.item, n: d.n }));
+      }
+      break;
+    }
     case 'tag': { // permanent marker on the floor — your mark stays forever
       const now = Date.now();
       if (now - (p.lastTag || 0) < 20000) {

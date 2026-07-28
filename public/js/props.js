@@ -68,8 +68,8 @@ export const PROP_KINDS = {
   'locker': { label: '🗄️ Locker bank', build() {
     const g = new THREE.Group();
     g.add(bx(2.0, 1.9, .5, mat(0xd6cfc0), 0, .95, 0));
-    const crown = bx(2.0, .06, .6, mat(0xc7bfae), 0, 2.0, -.04);
-    crown.rotation.x = -.4;
+    const crown = bx(2.0, .06, .6, mat(0xc7bfae), 0, 2.02, .04);
+    crown.rotation.x = .4; // slope down over the doors, high at the back
     g.add(crown);
     for (let i = 0; i < 4; i++) g.add(bx(.02, 1.7, .02, mat(0x9a927e), -.75 + i * .5, .95, .26));
     return { g, cw: 2.05, cd: .6 };
