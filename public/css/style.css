@@ -143,3 +143,8 @@ body.touch #hotbar { bottom: calc(96px + env(safe-area-inset-bottom)); }
 #tag-form .tag-pen { font-size: 1.2rem; }
 #tag-form input { background: transparent; border: none; outline: none; color: #ffd34d; font-family: inherit; font-size: 1rem; width: 340px; font-style: italic; }
 #tag-form input::placeholder { color: rgba(255,211,77,.45); }
+
+/* ---------- health ---------- */
+#hp-wrap { position: absolute; bottom: 98px; left: 50%; transform: translateX(-50%); width: 340px; height: 10px; background: rgba(10,14,20,.6); border: 1px solid rgba(255,255,255,.18); border-radius: 6px; overflow: hidden; z-index: 12; }
+#hp-fill { height: 100%; width: 100%; background: #37e06f; transition: width .18s ease, background .3s ease; }
+#dmg-flash { position: absolute; inset: 0; background: radial-gradient(ellipse at center, rgba(226,38,45,0) 42%, rgba(226,38,45,.75) 100%); opacity: 0; pointer-events: none; transition: opacity .35s ease; z-index: 40; }

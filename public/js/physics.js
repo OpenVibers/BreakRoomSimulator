@@ -368,18 +368,21 @@ export function initPhysics(scene) {
         b.velocity.set(0, 0, 0);
         b.angularVelocity.set(0, 0, 0);
       }
-      const off = b.quaternion.vmult(V(0, CAR_HH, 0));
-      car.group.position.set(b.position.x - off.x, b.position.y - off.y, b.position.z - off.z);
-      car.group.quaternion.copy(b.quaternion);
-      const f = b.quaternion.vmult(V(0, 0, 1));
+      // visuals from the interpolated pose (smooth); logic from it too so the
+      // camera riding car.x never disagrees with the mesh
+      const ip = b.interpolatedPosition, iq = b.interpolatedQuaternion;
+      const off = iq.vmult(V(0, CAR_HH, 0));
+      car.group.position.set(ip.x - off.x, ip.y - off.y, ip.z - off.z);
+      car.group.quaternion.copy(iq);
+      const f = iq.vmult(V(0, 0, 1));
       car.ry = Math.atan2(f.x, f.z);
-      car.x = b.position.x;
-      car.z = b.position.z;
-      const s = Math.abs(Math.sin(car.ry)), c = Math.abs(Math.cos(car.ry));
-      const hl = car.hl || 2.15, hw = car.hw || 1.0;
-      const ex = hl * s + hw * c, ez = hl * c + hw * s;
-      car.col.x0 = car.x - ex; car.col.x1 = car.x + ex;
-      car.col.z0 = car.z - ez; car.col.z1 = car.z + ez;
+      car.x = ip.x;
+      car.z = ip.z;
+      // walking collider from the body's true AABB — correct even when the
+      // car ends up tilted or on its roof (physgun aftermath)
+      b.updateAABB();
+      car.col.x0 = b.aabb.lowerBound.x; car.col.x1 = b.aabb.upperBound.x;
+      car.col.z0 = b.aabb.lowerBound.z; car.col.z1 = b.aabb.upperBound.z;
       if (car.inter) { car.inter.x = car.x; car.inter.z = car.z; }
     }
     for (const e of props.values()) {
@@ -392,8 +395,10 @@ export function initPhysics(scene) {
         b.velocity.set(0, 0, 0);
         b.angularVelocity.set(0, 0, 0);
       }
-      e.mesh.position.copy(b.position);
-      e.mesh.quaternion.copy(b.quaternion);
+      // interpolated pose: fixed-step positions quantize to 60Hz and read as
+      // chop against an unaligned rAF — cannon keeps smooth in-between values
+      e.mesh.position.copy(b.interpolatedPosition);
+      e.mesh.quaternion.copy(b.interpolatedQuaternion);
     }
     // stream my awake props + driverless cars I've been shoving, at ~12Hz
     sendT += dt;
@@ -423,9 +428,16 @@ export function initPhysics(scene) {
     return null;
   }
 
+  // gmod-style: rotate a held body's yaw in place (view-follow / R-spin)
+  const yawQ = new CANNON.Quaternion();
+  function yawBody(e, dyaw) {
+    yawQ.setFromAxisAngle(V(0, 1, 0), dyaw);
+    yawQ.mult(e.body.quaternion, e.body.quaternion);
+  }
+
   return {
     world, props, cars, add, remove, claim, applyState, applyCarState, sendState, sendCarState,
-    drive, step, smack, raycast, PHYS_KINDS,
+    drive, step, smack, raycast, yawBody, PHYS_KINDS,
     setMyId(id) { myId = id; },
   };
 }

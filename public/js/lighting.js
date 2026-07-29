@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { W } from './world.js';
 
-const DAY_LEN = 1440; // seconds per in-game day
+const DAY_LEN = 480; // seconds per in-game day — 8 minutes, brisk enough to watch
 
 export function timeOfDay() { // 0 = midnight, .5 = noon
   return (Date.now() / 1000 % DAY_LEN) / DAY_LEN;

@@ -323,7 +323,7 @@ function start(token, user) {
   };
 
   function doSwing() {
-    if (!my.held || ITEMS[my.held]?.type !== 'melee') return;
+    if (my.held && ITEMS[my.held]?.type !== 'melee') return; // empty hand = fists
     myAvatar.swing();
     vmSwing = 1;
     net.send({ t: 'swing' });
@@ -331,6 +331,29 @@ function start(token, user) {
     // send nearby physics props flying
     const fx = -Math.sin(my.yaw), fz = -Math.cos(my.yaw);
     if (phys.smack(my.x, my.y, my.z, fx, fz)) beep(160, .08, 'square', .09);
+    // did we clock somebody? nearest target in a front cone
+    let victim = null, bestD = 1.9;
+    for (const [id, o] of others) {
+      const g = o.avatar.group.position;
+      const ddx = g.x - my.x, ddz = g.z - my.z;
+      const d2 = Math.hypot(ddx, ddz);
+      if (d2 > bestD || (ddx * fx + ddz * fz) / (d2 || 1) < .5) continue;
+      bestD = d2; victim = id;
+    }
+    if (victim != null) {
+      net.send({ t: 'hit', target: victim, item: my.held });
+      beep(320, .06, 'square', .1);
+      return;
+    }
+    for (const [key, s] of sleeperMap) { // sleepers are fair game
+      const g = s.root.position;
+      const ddx = g.x - my.x, ddz = g.z - my.z;
+      const d2 = Math.hypot(ddx, ddz);
+      if (d2 > 1.9 || (ddx * fx + ddz * fz) / (d2 || 1) < .35) continue;
+      net.send({ t: 'hit', sleeper: key, item: my.held });
+      beep(280, .06, 'square', .09);
+      break;
+    }
   }
   net.on('swing', (m) => {
     if (m.id === myId) return;
@@ -339,7 +362,7 @@ function start(token, user) {
   });
   function useKey() {
     const r = invApi.useSelected();
-    if (!r) return;
+    if (!r) { doSwing(); return; } // nothing selected: throw hands
     if (r.melee === 'physgun') { toast('🧲 Hold left-click to grab · wheel push/pull · R spin · X delete · Q spawns props'); return; }
     if (r.melee === 'flashlight') { toast('🔦 Lights wherever you look — best after dark.'); return; }
     if (r.melee) { doSwing(); return; }
@@ -427,38 +450,67 @@ function start(token, user) {
     (m.props || []).forEach(pr => phys.add(pr));
     (m.tags || []).forEach(addMark);
     (m.drops || []).forEach(addWorldDrop);
-    // retro associate counter by the front walkway — proof the place remembers
+    // the HALL OF RECORDS by the front walkway — numbers that only ever grow
     if (m.visitorNum) {
-      const pad6 = (v) => String(Math.min(v, 999999)).padStart(6, '0');
-      const signTex = ct(512, 224, (g, w, h) => {
-        g.fillStyle = '#101418'; g.fillRect(0, 0, w, h);
-        g.strokeStyle = '#2c343e'; g.lineWidth = 8; g.strokeRect(4, 4, w - 8, h - 8);
+      const pad6 = (v) => String(Math.min(v ?? 0, 999999)).padStart(6, '0');
+      const st = m.stats || {};
+      const dayN = Math.max(1, Math.floor((Date.now() - (st.since || Date.now())) / 864e5) + 1);
+      const signTex = ct(1024, 512, (g, w, h) => {
+        g.fillStyle = '#0d1116'; g.fillRect(0, 0, w, h);
+        const grd = g.createLinearGradient(0, 0, 0, h);
+        grd.addColorStop(0, 'rgba(255,153,0,.08)'); grd.addColorStop(.4, 'rgba(0,0,0,0)');
+        g.fillStyle = grd; g.fillRect(0, 0, w, h);
+        g.strokeStyle = '#2c343e'; g.lineWidth = 10; g.strokeRect(5, 5, w - 10, h - 10);
         g.textAlign = 'center';
-        g.fillStyle = '#8fa0b3'; g.font = '700 26px "Segoe UI", sans-serif';
-        g.fillText(`YOU ARE ASSOCIATE Nº ${m.visitorNum}`, w / 2, 44);
-        g.fillStyle = '#5d6b7a'; g.font = '700 22px "Segoe UI", sans-serif';
-        g.fillText('TOTAL BADGE-INS, ALL TIME', w / 2, 84);
-        g.fillStyle = '#ffb52e'; g.font = '700 76px "Consolas", monospace';
-        g.shadowColor = '#ffb52e'; g.shadowBlur = 18;
-        g.fillText(pad6(m.stats?.joins ?? m.visitorNum), w / 2, 154);
+        g.fillStyle = '#ff9900'; g.font = '800 46px "Segoe UI", sans-serif';
+        g.fillText('PAE2 · HALL OF RECORDS', w / 2, 66);
+        g.fillStyle = '#5d6b7a'; g.font = '600 27px "Segoe UI", sans-serif';
+        g.fillText(`you are associate № ${m.visitorNum} · day ${dayN} of forever`, w / 2, 108);
+        g.fillStyle = '#ffb52e'; g.font = '700 108px Consolas, monospace';
+        g.shadowColor = '#ffb52e'; g.shadowBlur = 24;
+        g.fillText(pad6(st.joins ?? m.visitorNum), w / 2, 222);
         g.shadowBlur = 0;
-        g.fillStyle = '#5d6b7a'; g.font = '22px "Consolas", monospace';
-        g.fillText(`naps: ${m.stats?.naps ?? 0} · marks: ${m.stats?.marks ?? 0} · the lights stay on`, w / 2, 196);
+        g.fillStyle = '#8fa0b3'; g.font = '700 26px "Segoe UI", sans-serif';
+        g.fillText('TOTAL BADGE-INS, ALL TIME', w / 2, 262);
+        const rows = [
+          ['💤 naps taken', st.naps], ['🖊️ marks left', st.marks],
+          ['📦 props spawned', st.props], ['🌳 trees flattened', st.knocks],
+          ['🎒 items dropped', st.drops], ['🔥 items burned', st.burns],
+          ['🚗 joyrides', st.joyrides], ['🏎️ lambo found', st.lambo],
+          ['🏆 games won', st.wins], ['💀 incidents', st.kills],
+        ];
+        rows.forEach(([label, v], i) => {
+          const cx = (i % 2) ? w * .73 : w * .27;
+          const cy = 316 + Math.floor(i / 2) * 38;
+          g.fillStyle = '#9fb0c3'; g.font = '600 26px "Segoe UI", sans-serif'; g.textAlign = 'right';
+          g.fillText(label, cx + 30, cy);
+          g.fillStyle = '#ffd34d'; g.font = '700 26px Consolas, monospace'; g.textAlign = 'left';
+          g.fillText(String(v ?? 0), cx + 48, cy);
+        });
+        g.textAlign = 'center';
+        g.fillStyle = '#44515f'; g.font = 'italic 23px "Segoe UI", sans-serif';
+        g.fillText('nothing here resets · the lights stay on', w / 2, 496);
       });
       const sg = new THREE.Group();
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(.05, .05, 2.0, 8), new THREE.MeshStandardMaterial({ color: 0x2a2f36, roughness: .6 }));
-      post.position.y = 1.0;
-      sg.add(post);
-      const panel = new THREE.Mesh(new THREE.PlaneGeometry(2.3, 1.0), new THREE.MeshBasicMaterial({ map: signTex }));
-      panel.position.y = 2.1;
+      const postM = new THREE.MeshStandardMaterial({ color: 0x2a2f36, roughness: .6 });
+      for (const px of [-1.6, 1.6]) { // posts at the EDGES — nothing through the numbers
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(.06, .06, 2.6, 8), postM);
+        post.position.set(px, 1.3, 0);
+        sg.add(post);
+      }
+      const panel = new THREE.Mesh(new THREE.PlaneGeometry(3.7, 1.85), new THREE.MeshBasicMaterial({ map: signTex }));
+      panel.position.y = 2.6;
       sg.add(panel);
-      sg.position.set(103, 0, 6.4);
+      const back = new THREE.Mesh(new THREE.PlaneGeometry(3.7, 1.85), new THREE.MeshStandardMaterial({ color: 0x181d23, roughness: .8, side: THREE.BackSide }));
+      back.position.set(0, 2.6, .012);
+      sg.add(back);
+      sg.position.set(103, 0, 6.6);
       sg.rotation.y = Math.PI;
       scene.add(sg);
-      W.colliders.push({ x0: 102.7, x1: 103.3, z0: 6.1, z1: 6.7 });
+      W.colliders.push({ x0: 101.2, x1: 101.6, z0: 6.4, z1: 6.8 }, { x0: 104.4, x1: 104.8, z0: 6.4, z1: 6.8 });
       addChat(`📟 You are associate №${m.visitorNum}. The break room remembers everyone.`, 'sys');
-      addChat('🖊️ G leaves a permanent mark · Q spawns props · H (or right-click a slot) drops items · the 🧲 is out on 172nd St.', 'sys');
     }
+    setHp(m.hp ?? 100, false);
     if (me.admin && !editor) editor = initEditor({ scene, camera, props, toast });
     $('online-count').textContent = m.online;
     for (const p of m.players) addOther(p);
@@ -493,6 +545,34 @@ function start(token, user) {
     else others.get(m.id)?.avatar.say(m.text);
   });
   net.on('sys', (m) => addChat(esc(m.text), 'sys'));
+
+  // ---------- health ----------
+  const hpFill = $('hp-fill'), dmgFlash = $('dmg-flash');
+  function setHp(v, hurt) {
+    hpFill.style.width = Math.max(0, Math.min(100, v)) + '%';
+    hpFill.style.background = v > 60 ? '#37e06f' : v > 30 ? '#f2c521' : '#e2262d';
+    if (hurt) {
+      dmgFlash.style.opacity = .6;
+      setTimeout(() => { dmgFlash.style.opacity = 0; }, 130);
+      beep(170, .1, 'sawtooth', .13);
+    }
+  }
+  net.on('hp', (m) => { if (m.id === myId) setHp(m.hp, m.by != null); });
+  net.on('died', (m) => {
+    setHp(100, false);
+    my.x = m.x; my.z = m.z; my.y = 0; my.vy = 0;
+    my.vel.x = 0; my.vel.z = 0;
+    my.held = null;
+    myAvatar.setHeld(null);
+    net.send({ t: 'held', item: null });
+    invApi.restore(new Array(24).fill(null), new Array(6).fill(null));
+    updateViewmodel();
+    dmgFlash.style.opacity = .9;
+    setTimeout(() => { dmgFlash.style.opacity = 0; }, 700);
+    toast(`💀 ${m.by} got you. Your stuff is scattered where you fell.`, 5600);
+    beep(90, .5, 'sawtooth', .18);
+    sendPos(true);
+  });
   net.on('edit', (m) => props.applyServer(m));
   net.on('vest', (m) => {
     if (m.id === myId) myAvatar.setVest(m.vest);
@@ -583,6 +663,7 @@ function start(token, user) {
   }
   function burnItems(id, n = 1) {
     toast(`🔥 ${ITEMS[id].icon} ${ITEMS[id].name}${n > 1 ? ' ×' + n : ''} went up in flames`, 3200);
+    net.send({ t: 'burn', n }); // hall-of-records bookkeeping
     beep(200, .25, 'sawtooth', .1);
     setTimeout(() => beep(140, .3, 'sawtooth', .06), 180);
   }
@@ -749,6 +830,7 @@ function start(token, user) {
     const hit = pgPick();
     if (!hit) return;
     pgState.held = hit.e;
+    pgState.lastYaw = my.yaw; // view-follow rotation baseline
     pgState.dist = Math.max(1.6, Math.min(hit.e.isCar ? 16 : 12, hit.distance));
     hit.e.grabbedBy = myId;
     phys.claim(hit.e);
@@ -1037,6 +1119,8 @@ function start(token, user) {
           if (invApi.add(nearest.data.item)) {
             toast(`${ITEMS[nearest.data.item].icon} ${ITEMS[nearest.data.item].name} → inventory`);
             beep(600, .06, 'sine', .1);
+            if (nearest.data.item === 'physgun') // the sandbox manual comes with the tool
+              addChat('🧲 Hold left-click to grab (props & empty cars) · wheel push/pull · R spin · X delete · Q spawns props · H drops items · G leaves a permanent mark', 'sys');
           }
           return;
         case 'dropitem':
@@ -1106,8 +1190,8 @@ function start(token, user) {
     const ndc = new THREE.Vector2((sx / innerWidth) * 2 - 1, -(sy / innerHeight) * 2 + 1);
     raycaster.setFromCamera(ndc, camera);
     if (mg.worldClick(raycaster)) return;
-    // clicking with a melee prop equipped = attack (first OR third person)
-    if (my.held && ITEMS[my.held]?.type === 'melee') doSwing();
+    // clicking with a melee prop (or bare fists) = attack, first OR third person
+    if (!my.held || ITEMS[my.held]?.type === 'melee') doSwing();
   };
 
   // ---------- movement & camera ----------
@@ -1226,6 +1310,41 @@ function start(token, user) {
       }
     }
 
+    // ---- sandbox physics: step BEFORE the camera/avatar read positions, so
+    // the car you're riding and the mesh you see are the same frame (chop fix)
+    if (pgState.held) {
+      const held = pgState.held;
+      if (!pgEquipped() || !(held.isCar ? phys.cars : phys.props).has(held.id)) physgunRelease(false);
+      else { // drag the grabbed body toward the point pgState.dist along the view ray
+        const b = held.body;
+        b.wakeUp();
+        const dir2 = camera.getWorldDirection(beamV);
+        const tx3 = camera.position.x + dir2.x * pgState.dist;
+        const ty3 = Math.max(.3, camera.position.y + dir2.y * pgState.dist);
+        const tz3 = camera.position.z + dir2.z * pgState.dist;
+        let vx3 = (tx3 - b.position.x) * 10, vy3 = (ty3 - b.position.y) * 10, vz3 = (tz3 - b.position.z) * 10;
+        const vl = Math.hypot(vx3, vy3, vz3);
+        if (vl > 22) { vx3 *= 22 / vl; vy3 *= 22 / vl; vz3 *= 22 / vl; }
+        b.velocity.set(vx3, vy3, vz3);
+        // gmod grip: the object turns with your view and otherwise holds its pose
+        const dyaw = my.yaw - (pgState.lastYaw ?? my.yaw);
+        pgState.lastYaw = my.yaw;
+        if (input.keys.KeyR) b.angularVelocity.set(0, 2.8, 0);
+        else {
+          b.angularVelocity.set(0, 0, 0);
+          if (Math.abs(dyaw) > 1e-4) phys.yawBody(held, dyaw);
+        }
+      }
+    }
+    phys.step(dt, my);
+    if (carState.driving) { // re-sync the seat to the freshly stepped chassis
+      const car = carState.driving;
+      const ce2 = phys.cars.get(car.id);
+      my.x = car.x; my.z = car.z;
+      my.y = Math.max(0, ce2.body.position.y - .15);
+      my.ry = car.ry;
+    }
+
     // avatar
     myAvatar.group.position.set(my.x, my.y + (myAvatar.bobY || 0), my.z);
     myAvatar.group.rotation.y = my.ry;
@@ -1306,25 +1425,6 @@ function start(token, user) {
       g.pr.rotation.y += (target - g.pr.rotation.y) * Math.min(1, dt * 8);
     }
 
-    // ---- sandbox physics ----
-    if (pgState.held) {
-      const held = pgState.held;
-      if (!pgEquipped() || !(held.isCar ? phys.cars : phys.props).has(held.id)) physgunRelease(false);
-      else { // drag the grabbed prop toward the point pgState.dist along the view ray
-        const b = held.body;
-        b.wakeUp();
-        const dir2 = camera.getWorldDirection(beamV);
-        const tx3 = camera.position.x + dir2.x * pgState.dist;
-        const ty3 = Math.max(.3, camera.position.y + dir2.y * pgState.dist);
-        const tz3 = camera.position.z + dir2.z * pgState.dist;
-        let vx3 = (tx3 - b.position.x) * 10, vy3 = (ty3 - b.position.y) * 10, vz3 = (tz3 - b.position.z) * 10;
-        const vl = Math.hypot(vx3, vy3, vz3);
-        if (vl > 22) { vx3 *= 22 / vl; vy3 *= 22 / vl; vz3 *= 22 / vl; }
-        b.velocity.set(vx3, vy3, vz3);
-        if (input.keys.KeyR) b.angularVelocity.set(0, 2.8, 0);
-      }
-    }
-    phys.step(dt, my);
     updateBeams();
 
     // sleepers dream

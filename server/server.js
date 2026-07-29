@@ -72,7 +72,7 @@ const pongEvents = (ev, data) => {
   if (ev === 'gameover') {
     const table = pong[data.id];
     const w = table?.seats?.[data.winner];
-    if (w) store.addWin(w.key, 'pongWins');
+    if (w) { store.addWin(w.key, 'pongWins'); stats.wins++; worldDirty = true; }
     sys(`🏓 ${data.winnerName} wins ping pong ${data.score[data.winner]}-${data.score[1 - data.winner]}!`);
   }
 };
@@ -113,8 +113,11 @@ let nextDropId = [...drops.keys()].reduce((m, id) => Math.max(m, Number(String(i
 // permanent marker tags — the "I was here" layer. They outlive everyone.
 const tags = Array.isArray(savedWorld.tags) ? savedWorld.tags : [];
 let nextTagId = tags.reduce((m, t) => Math.max(m, Number(String(t.id).slice(1)) || 0), 0) + 1;
-// lifetime counters for the retro hit-counter energy
-const stats = Object.assign({ joins: 0, naps: 0 }, savedWorld.stats || {});
+// lifetime counters for the hall-of-records board — numbers that only grow
+const stats = Object.assign(
+  { joins: 0, naps: 0, props: 0, knocks: 0, drops: 0, joyrides: 0, lambo: 0, burns: 0, kills: 0, wins: 0, since: Date.now() },
+  savedWorld.stats || {});
+stats.since ||= Date.now();
 function pruneSleepers() { // nappers expire after a week; keep the 60 most recent
   const cutoff = Date.now() - 7 * 864e5;
   for (const [k, s] of sleepers) if ((s.ts || 0) < cutoff) sleepers.delete(k);
@@ -151,6 +154,23 @@ for (const sig of ['SIGTERM', 'SIGINT']) {
   });
 }
 
+// a victim's whole inventory scatters on the floor around where they fell
+function spillInventory(key, x, z) {
+  const u = store.getInventory(key);
+  if (!u) return;
+  for (const s of [...u.inv, ...u.hotbar]) {
+    if (!s || drops.size >= 200) continue;
+    const d = {
+      id: 'd' + nextDropId++, item: s.id, n: s.n || 1,
+      x: clampX(+(x + (Math.random() - .5) * 2.2).toFixed(2)), y: .35, z: clampZ(+(z + (Math.random() - .5) * 2.2).toFixed(2)),
+    };
+    drops.set(d.id, d);
+    broadcast({ t: 'drop', op: 'add', d });
+  }
+  store.clearInventory(key);
+  worldDirty = true;
+}
+
 function pubState(p) {
   return { id: p.id, name: p.name, vest: p.vest, ap: p.ap || null, x: p.x, y: p.y, z: p.z, ry: p.ry, anim: p.anim, seat: p.seat, held: p.held };
 }
@@ -170,7 +190,7 @@ wss.on('connection', (ws, req) => {
   const p = {
     id, key: user.key, name: user.name, vest: user.vest, admin: user.admin, ap: user.ap, guest: !!user.guest, ws,
     x: 105 + Math.random() * 3, y: 0, z: -1 + Math.random() * 2, ry: -Math.PI / 2,
-    anim: 'idle', seat: null, held: null, lastChat: 0,
+    anim: 'idle', seat: null, held: null, lastChat: 0, hp: 100,
   };
   // returning player: wake their napper and resume exactly where they dozed off
   const slept = sleepers.get(user.key);
@@ -186,7 +206,8 @@ wss.on('connection', (ws, req) => {
   ws.send(JSON.stringify({
     t: 'init', id, you: pubState(p), guest: user.guest, admin: user.admin,
     inv: user.inv, hotbar: user.hotbar,
-    visitorNum: stats.joins, stats: { joins: stats.joins, naps: stats.naps, marks: tags.length },
+    visitorNum: stats.joins, stats: { ...stats, marks: tags.length },
+    hp: p.hp,
     tags,
     drops: [...drops.values()],
     mapEdits,
@@ -299,7 +320,7 @@ function handle(p, m) {
         if (r.error) return;
         if (g.winner === 0 || g.winner === 1) {
           const w = g.seats[g.winner];
-          if (w) { store.addWin(w.key, 'c4Wins'); sys(`🎉 ${w.name} wins giant Connect 4!`); }
+          if (w) { store.addWin(w.key, 'c4Wins'); stats.wins++; worldDirty = true; sys(`🎉 ${w.name} wins giant Connect 4!`); }
         }
       }
       else if (m.op === 'reset') { if (g.seats.some(s => s?.key === p.key)) g.reset(); }
@@ -314,7 +335,7 @@ function handle(p, m) {
         if (r.error) return;
         if (r.winnerSeat !== null && r.winnerSeat !== undefined) {
           const w = chess.seats[r.winnerSeat];
-          if (w) { store.addWin(w.key, 'chessWins'); sys(`♛ ${w.name} captured the king and wins at chess!`); }
+          if (w) { store.addWin(w.key, 'chessWins'); stats.wins++; worldDirty = true; sys(`♛ ${w.name} captured the king and wins at chess!`); }
         }
       }
       else if (m.op === 'reset') { if (chess.seats.some(s => s?.key === p.key)) chess.reset(); }
@@ -353,6 +374,9 @@ function handle(p, m) {
       if (m.op === 'enter') {
         if (c.driver && c.driver !== p.id) return;
         c.driver = p.id;
+        stats.joyrides++;
+        if (id === 'lambo') stats.lambo++;
+        worldDirty = true;
         broadcast({ t: 'car', id, op: 'enter', driver: p.id });
         sys(id === 'lambo' ? `🏎️ ${p.name} found THE LAMBO` : `🚗 ${p.name} got into a car`);
       } else if (m.op === 'exit') {
@@ -385,6 +409,7 @@ function handle(p, m) {
         if (pos.length !== 3 || !pos.every(Number.isFinite)) return;
         const prop = { id: 'fp' + nextPhysId++, kind: m.kind, p: [clampX(pos[0]), Math.max(0, Math.min(30, pos[1])), clampZ(pos[2])], q: [0, 0, 0, 1] };
         props.set(prop.id, prop);
+        stats.props++;
         worldDirty = true;
         broadcast({ t: 'prop', op: 'add', prop, owner: p.id });
       } else if (m.op === 'state') {
@@ -427,6 +452,7 @@ function handle(p, m) {
           x: clampX(+(+m.x || 0).toFixed(2)), y: Math.max(.05, Math.min(8, +(+m.y || 0).toFixed(2))), z: clampZ(+(+m.z || 0).toFixed(2)),
         };
         drops.set(d.id, d);
+        stats.drops++;
         worldDirty = true;
         broadcast({ t: 'drop', op: 'add', d });
       } else if (m.op === 'take') {
@@ -439,9 +465,59 @@ function handle(p, m) {
       }
       break;
     }
+    case 'burn': { // hall-of-records bookkeeping for the barrel
+      stats.burns += Math.max(1, Math.min(99, Math.floor(Number(m.n) || 1)));
+      worldDirty = true;
+      break;
+    }
+    case 'hit': { // melee combat — fists and break-room weaponry
+      const now = Date.now();
+      if (now - (p.lastHitAt || 0) < 350) return;
+      p.lastHitAt = now;
+      const DMG = { fists: 6, paddle: 10, broom: 12, tapegun: 8, tube: 8, wrench: 15, banana: 4 };
+      const weapon = m.item == null ? 'fists' : String(m.item);
+      const dmg = DMG[weapon];
+      if (!dmg) return;
+      const label = weapon === 'fists' ? 'their fists' : `a ${weapon}`;
+      if (m.sleeper) { // sleepers are fair game — brutal, but this place remembers
+        const key = String(m.sleeper);
+        const s = sleepers.get(key);
+        if (!s) return;
+        if (Math.hypot(p.x - s.x, p.z - s.z) > 3.4) return;
+        s.hp = (s.hp ?? 40) - dmg; // sleepers are fragile
+        if (s.hp > 0) { worldDirty = true; return; }
+        sleepers.delete(key);
+        spillInventory(key, s.x, s.z);
+        stats.kills++;
+        worldDirty = true;
+        broadcast({ t: 'wake', key });
+        sys(`💀 ${p.name} took out ${s.name} in their sleep with ${label}`);
+        return;
+      }
+      const t = players.get(Number(m.target));
+      if (!t || t.id === p.id) return;
+      if (Math.hypot(p.x - t.x, p.z - t.z) > 3.4) return;
+      t.hp = (t.hp ?? 100) - dmg;
+      if (t.hp > 0) {
+        broadcast({ t: 'hp', id: t.id, hp: t.hp, by: p.id });
+        return;
+      }
+      // death: everything they carried spills where they fell, then respawn
+      stats.kills++;
+      worldDirty = true;
+      spillInventory(t.key, t.x, t.z);
+      t.hp = 100;
+      t.x = 105 + Math.random() * 3; t.y = 0; t.z = -1 + Math.random() * 2;
+      if (t.ws.readyState === 1) t.ws.send(JSON.stringify({ t: 'died', by: p.name, x: t.x, z: t.z }));
+      broadcast({ t: 'hp', id: t.id, hp: 100 });
+      sys(`💀 ${p.name} clocked ${t.name} with ${label} — their stuff hit the floor`);
+      break;
+    }
     case 'knock': { // decorative crash relay — no state, knockables respawn
       const kid = String(m.id || '').slice(0, 8);
       if (!/^k\d+$/.test(kid) || ![m.dx, m.dz].every(Number.isFinite)) return;
+      stats.knocks++;
+      worldDirty = true;
       broadcast({ t: 'knock', id: kid, dx: +m.dx.toFixed(2), dz: +m.dz.toFixed(2) }, p.id);
       break;
     }

@@ -159,6 +159,18 @@ export function addWin(key, stat) {
   saveSoon();
 }
 
+export function getInventory(key) {
+  const u = users[key] || guests.get(key);
+  return u ? { inv: u.inv || [], hotbar: u.hotbar || [] } : null;
+}
+export function clearInventory(key) {
+  const u = users[key] || guests.get(key);
+  if (!u) return;
+  u.inv = [];
+  u.hotbar = [];
+  saveSoon();
+}
+
 export function getHighscores() { return highscores; }
 
 export function submitScore(name, score) {
