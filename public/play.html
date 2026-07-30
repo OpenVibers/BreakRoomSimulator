@@ -81,12 +81,6 @@
   <!-- hotbar -->
   <div id="hotbar"></div>
 
-  <!-- sandbox spawn menu (Q) -->
-  <div id="spawn-menu" class="hidden">
-    <div class="spawn-title">📦 Spawn a prop <span>(Q closes · physgun to move stuff)</span></div>
-    <div id="spawn-grid"></div>
-  </div>
-
   <!-- pong swing UI -->
   <div id="pong-ui" class="hidden">
     <div id="pong-score"></div>
@@ -126,6 +120,9 @@
     <div class="set-row"><span>Extra lights</span><input id="set-xlights" type="checkbox"></div>
     <div class="set-row"><span>Antialiasing</span><input id="set-aa" type="checkbox"></div>
     <div class="set-row"><span>FPS counter</span><input id="set-fps" type="checkbox"></div>
+    <p style="margin-top:6px">Friends (can touch your props &amp; base)</p>
+    <div class="set-row"><input id="friend-name" type="text" maxlength="20" placeholder="associate name" style="flex:1"><button id="btn-friend-add" class="segbtn">Add</button></div>
+    <div id="friends-list"></div>
     <p style="margin-top:6px">Game settings</p>
     <div class="set-row"><span>Scroll wheel</span>
       <div class="seg"><button id="set-wheel-zoom" class="segbtn">Zoom</button><button id="set-wheel-hotbar" class="segbtn">Hotbar</button></div>

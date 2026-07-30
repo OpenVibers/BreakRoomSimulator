@@ -99,13 +99,17 @@ export function initLighting(scene, renderer, shadows = true) {
   ];
   let indoorK = 0;
 
+  // night takes only 30% of the loop — it's for the vibes, not the duration
+  function skewT(rawT) {
+    return rawT < .3 ? rawT / .3 * .5 : .5 + (rawT - .3) / .7 * .5;
+  }
   let frameN = 0;
   function update(dt, px, pz) {
     frameN++;
     if (renderer.shadowMap.enabled && frameN % 3 === 0) renderer.shadowMap.needsUpdate = true;
     const inside = INDOORS.some(([x0, x1, z0, z1]) => px >= x0 && px <= x1 && pz >= z0 && pz <= z1) ? 1 : 0;
     indoorK += (inside - indoorK) * Math.min(1, (dt || .016) * 4);
-    const t = timeOfDay();
+    const t = skewT(timeOfDay());
     const elev = -Math.cos(t * Math.PI * 2);      // -1 midnight … +1 noon
     const az = t * Math.PI * 2;
     const d = smooth(-.14, .28, elev);            // day factor

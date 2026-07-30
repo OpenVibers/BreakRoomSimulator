@@ -224,7 +224,7 @@ function start(token, user) {
       myAvatar.setHeld(item);
       net.send({ t: 'held', item });
       updateViewmodel();
-      if (item === 'physgun') toast('🧲 Hold left-click on a prop or empty car to grab · wheel push/pull · R spin · X delete · Q spawns props', 4600);
+      if (item === 'physgun') toast('🧲 Hold left-click on a prop or empty car to grab · wheel push/pull · R spin · X delete', 4600);
     },
     onWear: (def) => {
       if (def.ap) { me.ap = { ...(me.ap || {}), ...def.ap }; rebuildMyAvatar(); net.send({ t: 'appear', ap: me.ap }); }
@@ -420,6 +420,15 @@ function start(token, user) {
       if (d2 > 1.9 || (ddx * fx + ddz * fz) / (d2 || 1) < .35) continue;
       net.send({ t: 'hit', sleeper: key, item: my.held });
       beep(280, .06, 'square', .09);
+      return;
+    }
+    for (const [id, n] of npcMap) { // hunting / zombie defense
+      const g = n.group.position;
+      const ddx = g.x - my.x, ddz = g.z - my.z;
+      const d2 = Math.hypot(ddx, ddz);
+      if (d2 > 2.1 || (ddx * fx + ddz * fz) / (d2 || 1) < .35) continue;
+      net.send({ t: 'hit', npc: id, item: my.held });
+      beep(300, .06, 'square', .1);
       break;
     }
   }
@@ -431,10 +440,11 @@ function start(token, user) {
   function useKey() {
     const r = invApi.useSelected();
     if (!r) { doSwing(); return; } // nothing selected: throw hands
-    if (r.melee === 'physgun') { toast('🧲 Hold left-click to grab · wheel push/pull · R spin · X delete · Q spawns props'); return; }
+    if (r.melee === 'physgun') { toast('🧲 Hold left-click to grab · wheel push/pull · R spin · X delete'); return; }
     if (r.melee === 'flashlight') { toast('🔦 Lights wherever you look — best after dark.'); return; }
     if (ITEMS[r.melee]?.type === 'gun') { firePistol(); return; }
     if (ITEMS[r.melee]?.type === 'build') { placeBuild(); return; }
+    if (ITEMS[r.melee]?.type === 'prop') { placeProp(); return; }
     if (ITEMS[r.melee]?.type === 'mat') { toast('🔨 Raw material — press C to craft with it.'); return; }
     if (r.melee) { doSwing(); return; }
     if (r.def) {
@@ -453,7 +463,7 @@ function start(token, user) {
       invApi.toggle();
     } else if (e.code === 'KeyV') setFP(!fp);
     else if (e.code === 'KeyF') useKey();
-    else if (e.code === 'KeyQ') toggleSpawn();
+    else if (e.code === 'KeyQ') toggleCraft(); // Q = crafting too (spawn menu retired)
     else if (e.code === 'KeyC') toggleCraft();
     else if (e.code === 'KeyG') { e.preventDefault(); openTag(); }
     else if (e.code === 'KeyH') { const dropId = invApi.dropSelected(); if (dropId) { dropItemInWorld(dropId); beep(340, .05, 'sine', .07); } }
@@ -496,7 +506,6 @@ function start(token, user) {
     else if (e.code === 'Escape' && started) {
       // Escape closes the top UI panel (craft/spawn/inventory/settings) like any game menu
       if (craftOpen) toggleCraft(false);
-      else if (spawnOpen) toggleSpawn(false);
       else if (invApi.state.open) invApi.toggle(false);
       else if (!$('settings').classList.contains('hidden')) { $('settings').classList.add('hidden'); uiFocus('settings', false); }
     }
@@ -524,6 +533,9 @@ function start(token, user) {
     (m.tags || []).forEach(addMark);
     (m.drops || []).forEach(addWorldDrop);
     (m.builds || []).forEach(addBuild);
+    (m.npcs || []).forEach(([id, kind, x, z, ry]) => ensureNpc(id, kind, x, z, ry));
+    myFriends = m.friends || [];
+    renderFriends();
     // the HALL OF RECORDS by the front walkway — numbers that only ever grow
     if (m.visitorNum) {
       const pad6 = (v) => String(Math.min(v ?? 0, 999999)).padStart(6, '0');
@@ -851,6 +863,93 @@ function start(token, user) {
   }
   net.on('tag', (m) => { if (m.op === 'add') addMark(m.tag); });
 
+
+  // ---------- NPCs: the herd and the horde ----------
+  const npcMap = new Map(); // id -> {kind, group, legs, arms, head, t, tx, tz, try, mats}
+  function buildNpcMesh(kind) {
+    const g = new THREE.Group();
+    const legs = [], arms = [];
+    let head = null;
+    const mats = [];
+    const M2 = (c, r = .85) => { const m2 = new THREE.MeshStandardMaterial({ color: c, roughness: r }); mats.push(m2); return m2; };
+    const bx = (w, h, d, m2, x, y, z) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m2); o.position.set(x, y, z); return o; };
+    if (kind === 'cow') {
+      const white = M2(0xf2efe8), black = M2(0x26262a);
+      g.add(bx(.8, .7, 1.25, white, 0, .95, 0));
+      g.add(bx(.82, .3, .45, black, 0, 1.05, .2));
+      g.add(bx(.82, .25, .3, black, 0, .85, -.4));
+      head = bx(.42, .42, .4, white, 0, 1.25, .8);
+      head.add(bx(.44, .18, .12, M2(0xe8b8c8), 0, -.14, .18)); // muzzle
+      g.add(head);
+      for (const [lx, lz] of [[-.28, .45], [.28, .45], [-.28, -.45], [.28, -.45]]) {
+        const leg = bx(.16, .6, .16, white, lx, .3, lz);
+        legs.push(leg); g.add(leg);
+      }
+    } else if (kind === 'chicken') {
+      const white = M2(0xf5f2ea);
+      g.add(bx(.32, .3, .42, white, 0, .35, 0));
+      head = bx(.18, .2, .18, white, 0, .62, .16);
+      head.add(bx(.06, .05, .12, M2(0xe8920c, .6), 0, -.02, .14)); // beak
+      head.add(bx(.05, .08, .06, M2(0xd42020, .7), 0, .12, .02));  // comb
+      g.add(head);
+      for (const lx of [-.08, .08]) {
+        const leg = bx(.045, .22, .045, M2(0xe8920c, .6), lx, .11, 0);
+        legs.push(leg); g.add(leg);
+      }
+    } else { // zombie
+      const skin = M2(0x6a9c4e, .9), shirt = M2(0x3a3f46, .95);
+      g.add(bx(.44, .62, .26, shirt, 0, 1.12, 0));
+      head = bx(.3, .3, .3, skin, 0, 1.62, 0);
+      g.add(head);
+      for (const ax of [-.3, .3]) { // arms out front, classic
+        const arm = bx(.11, .11, .55, skin, ax, 1.3, .34);
+        arms.push(arm); g.add(arm);
+      }
+      for (const lx of [-.12, .12]) {
+        const leg = bx(.15, .8, .18, M2(0x2b3038, .95), lx, .4, 0);
+        legs.push(leg); g.add(leg);
+      }
+    }
+    enableShadows(g);
+    return { group: g, legs, arms, head, mats };
+  }
+  function ensureNpc(id, kind, x, z, ry) {
+    let n = npcMap.get(id);
+    if (n) return n;
+    const built = buildNpcMesh(kind);
+    built.group.position.set(x, 0, z);
+    built.group.rotation.y = ry;
+    scene.add(built.group);
+    n = { id, kind, ...built, t: Math.random() * 9, tx: x, tz: z, try: ry };
+    npcMap.set(id, n);
+    return n;
+  }
+  function removeNpc(id, burn) {
+    const n = npcMap.get(id);
+    if (!n) return;
+    scene.remove(n.group);
+    npcMap.delete(id);
+    if (burn) beep(190, .3, 'sawtooth', .08);
+  }
+  net.on('npcs', (m) => {
+    const seen = new Set();
+    for (const [id, kind, x, z, ry] of m.d) {
+      seen.add(id);
+      const n = ensureNpc(id, kind, x, z, ry);
+      n.tx = x; n.tz = z; n.try = ry;
+    }
+    for (const id of [...npcMap.keys()]) if (!seen.has(id)) removeNpc(id);
+  });
+  net.on('npc', (m) => {
+    if (m.op === 'del') removeNpc(m.id, m.burn);
+    else if (m.op === 'hurt') {
+      const n = npcMap.get(m.id);
+      if (!n) return;
+      for (const mt of n.mats) { mt.emissive.setHex(0xd42020); mt.emissiveIntensity = .8; }
+      setTimeout(() => { for (const mt of n.mats) { mt.emissive.setHex(0); mt.emissiveIntensity = 0; } }, 150);
+    }
+  });
+
   // ---------- knockables: mow down the landscaping, it grows back ----------
   const knockAxis = new THREE.Vector3();
   function knockIt(k, dx, dz, mine) {
@@ -892,24 +991,18 @@ function start(token, user) {
     closeTag();
   });
 
-  // ---------- sandbox: spawn menu (Q) ----------
-  const spawnEl = $('spawn-menu'), spawnGrid = $('spawn-grid');
-  for (const [kind, def] of Object.entries(PHYS_KINDS)) {
-    const b = document.createElement('button');
-    b.innerHTML = `<span class="ico">${def.icon}</span>${def.label}`;
-    b.onclick = () => { spawnProp(kind); toggleSpawn(false); };
-    spawnGrid.appendChild(b);
-  }
-  let spawnOpen = false;
-  function toggleSpawn(open) {
-    spawnOpen = open ?? !spawnOpen;
-    spawnEl.classList.toggle('hidden', !spawnOpen);
-    uiFocus('spawn', spawnOpen);
-  }
-  function spawnProp(kind) {
+  // props are CRAFTED now (C) — equip one and click to place it in the world
+  function spawnProp(kind) { // kept for the debug handle / tests
     const fx = -Math.sin(my.yaw), fz = -Math.cos(my.yaw);
     net.send({ t: 'prop', op: 'spawn', kind, p: [+(my.x + fx * 2.2).toFixed(2), 1.3, +(my.z + fz * 2.2).toFixed(2)] });
-    toast(`${PHYS_KINDS[kind].icon} ${PHYS_KINDS[kind].label} incoming!`);
+  }
+  function placeProp() {
+    const kind = my.held;
+    if (ITEMS[kind]?.type !== 'prop') return;
+    const used = invApi.dropSelected();
+    if (used !== kind) return;
+    spawnProp(kind);
+    toast(`${ITEMS[kind].icon} placed`);
   }
 
   // ---------- crafting (C) — rust-lite ----------
@@ -921,6 +1014,13 @@ function start(token, user) {
     { id: 'wall', cost: { wood: 12 }, desc: 'Placeable wall · upgradable to stone' },
     { id: 'floor', cost: { wood: 8 }, desc: 'Placeable floor panel' },
     { id: 'pistol', cost: { wood: 25, stone: 40 }, desc: 'Hitscan, 20 dmg — 40 on headshots' },
+    { id: 'door', cost: { wood: 14 }, desc: 'Fading door — E opens it for you & friends' },
+    { id: 'box', cost: { wood: 2 }, desc: 'Physics prop' },
+    { id: 'crate', cost: { wood: 6 }, desc: 'Physics prop, heavy' },
+    { id: 'ball', cost: { wood: 2, stone: 2 }, desc: 'Physics prop, bouncy' },
+    { id: 'barrel', cost: { stone: 6 }, desc: 'Physics prop' },
+    { id: 'melon', cost: { wood: 3 }, desc: 'Physics prop, organic' },
+    { id: 'cone', cost: { stone: 3 }, desc: 'Physics prop, official' },
   ];
   const craftEl = $('craft-menu'), craftList = $('craft-list'), craftHave = $('craft-have');
   let craftOpen = false;
@@ -966,27 +1066,32 @@ function start(token, user) {
     stoneWall: new THREE.MeshStandardMaterial({ color: 0x8d9196, roughness: .95 }),
   };
   function buildLabel(b) {
+    if (b.kind === 'door') return 'Door — E opens (owner & friends)';
     return b.tier === 'wood'
       ? `${b.kind === 'wall' ? 'Wall' : 'Floor'} (wood) — E: upgrade to stone (15 🪨)`
       : `${b.kind === 'wall' ? 'Wall' : 'Floor'} (stone)`;
   }
   function addBuild(b) {
     removeBuild(b.id);
-    const mat = b.tier === 'wood' ? tierM.woodWall : tierM.stoneWall;
+    let mat = b.tier === 'wood' ? tierM.woodWall : tierM.stoneWall;
+    if (b.kind === 'door') mat = new THREE.MeshStandardMaterial({ color: 0x6b4a2e, roughness: .8, transparent: true }); // per-door: it fades
     const mesh = b.kind === 'wall'
       ? new THREE.Mesh(new THREE.BoxGeometry(3, 3, .22), mat)
-      : new THREE.Mesh(new THREE.BoxGeometry(3, .15, 3), mat);
+      : b.kind === 'door'
+        ? new THREE.Mesh(new THREE.BoxGeometry(1.6, 2.7, .16), mat)
+        : new THREE.Mesh(new THREE.BoxGeometry(3, .15, 3), mat);
     mesh.position.set(b.p[0], b.p[1], b.p[2]);
     mesh.rotation.y = b.ry;
     enableShadows(mesh);
     scene.add(mesh);
     let col = null, body = null;
-    if (b.kind === 'wall') { // yaw-aware AABB for walking + a real static body for cars
+    if (b.kind === 'wall' || b.kind === 'door') { // yaw-aware AABB + static body
+      const hw2 = b.kind === 'door' ? .8 : 1.5;
       const s = Math.abs(Math.sin(b.ry)), c = Math.abs(Math.cos(b.ry));
-      const ex = 1.5 * s + .13 * c, ez = 1.5 * c + .13 * s;
+      const ex = hw2 * s + .13 * c, ez = hw2 * c + .13 * s;
       col = { x0: b.p[0] - ex, x1: b.p[0] + ex, z0: b.p[2] - ez, z1: b.p[2] + ez };
       W.colliders.push(col);
-      body = phys.addStatic(col.x0, col.x1, col.z0, col.z1, 0, 3);
+      body = phys.addStatic(col.x0, col.x1, col.z0, col.z1, 0, b.kind === 'door' ? 2.7 : 3);
     }
     const inter = { id: `build-${b.id}`, type: 'build', x: b.p[0], z: b.p[2], r: 2.4, label: buildLabel(b), data: { build: b.id } };
     W.interactables.push(inter);
@@ -1011,6 +1116,24 @@ function start(token, user) {
     } else if (m.op === 'upgrade') {
       const e = buildMap.get(m.id);
       if (e) { e.b.tier = m.tier; e.b.hp = m.hp; addBuild(e.b); beep(820, .1, 'sine', .12); }
+    } else if (m.op === 'fade') { // gmod fading door: see-through + passable for 4s
+      const e = buildMap.get(m.id);
+      if (!e || e.fading) return;
+      e.fading = true;
+      e.mesh.material.opacity = .22;
+      if (e.col) e.col.off = true;
+      if (e.body) { phys.removeStatic(e.body); e.body = null; }
+      beep(980, .08, 'sine', .1);
+      setTimeout(() => {
+        if (!buildMap.has(m.id)) return;
+        e.fading = false;
+        e.mesh.material.opacity = 1;
+        if (e.col) {
+          e.col.off = false;
+          e.body = phys.addStatic(e.col.x0, e.col.x1, e.col.z0, e.col.z1, 0, 2.7);
+        }
+        beep(620, .08, 'sine', .09);
+      }, 4000);
     }
   });
   // placement ghost while a build item is equipped
@@ -1018,9 +1141,10 @@ function start(token, user) {
   const ghosts = {
     wall: new THREE.Mesh(new THREE.BoxGeometry(3, 3, .22), ghostM),
     floor: new THREE.Mesh(new THREE.BoxGeometry(3, .15, 3), ghostM),
+    door: new THREE.Mesh(new THREE.BoxGeometry(1.6, 2.7, .16), ghostM),
   };
-  ghosts.wall.visible = ghosts.floor.visible = false;
-  scene.add(ghosts.wall, ghosts.floor);
+  ghosts.wall.visible = ghosts.floor.visible = ghosts.door.visible = false;
+  scene.add(ghosts.wall, ghosts.floor, ghosts.door);
   function ghostPose() {
     const fx = -Math.sin(my.yaw), fz = -Math.cos(my.yaw);
     const ry = Math.round(my.yaw / (Math.PI / 12)) * (Math.PI / 12);
@@ -1031,7 +1155,7 @@ function start(token, user) {
     const g = ghostPose();
     const used = invApi.dropSelected(); // consumes one from the equipped stack
     if (used !== kind) return;
-    net.send({ t: 'build', op: 'place', kind, p: [g.x, kind === 'wall' ? 1.5 : .08, g.z], ry: g.ry });
+    net.send({ t: 'build', op: 'place', kind, p: [g.x, kind === 'wall' ? 1.5 : kind === 'door' ? 1.35 : .08, g.z], ry: g.ry });
     beep(520, .07, 'sine', .1);
   }
 
@@ -1071,6 +1195,10 @@ function start(token, user) {
         const hits = pgRay.intersectObject(s.root, true);
         if (hits.length && (!best || hits[0].distance < best.d)) best = { d: hits[0].distance, kind: 'sleeper', id: key, point: hits[0].point, hs: false };
       }
+      for (const [nid, n] of npcMap) {
+        const hits = pgRay.intersectObject(n.group, true);
+        if (hits.length && (!best || hits[0].distance < best.d)) best = { d: hits[0].distance, kind: 'npc', id: nid, point: hits[0].point };
+      }
       for (const e of buildMap.values()) {
         const hits = pgRay.intersectObject(e.mesh, false);
         if (hits.length && (!best || hits[0].distance < best.d)) best = { d: hits[0].distance, kind: 'build', id: e.b.id, point: hits[0].point };
@@ -1085,6 +1213,7 @@ function start(token, user) {
     net.send({ t: 'shoot', to: [+end.x.toFixed(1), +end.y.toFixed(1), +end.z.toFixed(1)] });
     if (best?.kind === 'player') net.send({ t: 'hit', target: best.id, item: 'pistol', hs: best.hs });
     else if (best?.kind === 'sleeper') net.send({ t: 'hit', sleeper: best.id, item: 'pistol' });
+    else if (best?.kind === 'npc') net.send({ t: 'hit', npc: best.id, item: 'pistol' });
     else if (best?.kind === 'build') net.send({ t: 'build', op: 'hit', id: best.id, item: 'pistol' });
   }
   net.on('shoot', (m) => {
@@ -1114,6 +1243,9 @@ function start(token, user) {
     if (!hit) return;
     pgState.held = hit.e;
     pgState.lastYaw = my.yaw; // view-follow rotation baseline
+    // gmod grip: remember WHERE on the object you grabbed it
+    pgState.anchor = phys.grabLocal(hit.e, hit.point.x, hit.point.y, hit.point.z);
+    pgState.anchorOut = new hit.e.body.position.constructor();
     pgState.dist = Math.max(1.6, Math.min(hit.e.isCar ? 16 : 12, hit.distance));
     hit.e.grabbedBy = myId;
     phys.claim(hit.e);
@@ -1138,7 +1270,8 @@ function start(token, user) {
       physgunGrab();
       if (!pgState.held) beep(220, .05, 'square', .04); // dry-fire click
     } else if (my.held === 'pistol') firePistol();
-    else if (my.held === 'wall' || my.held === 'floor') placeBuild();
+    else if (ITEMS[my.held]?.type === 'build') placeBuild();
+    else if (ITEMS[my.held]?.type === 'prop') placeProp();
   });
   addEventListener('mouseup', (e) => {
     if (e.button !== 0) return;
@@ -1158,45 +1291,52 @@ function start(token, user) {
     sp.renderOrder = 7;
     return sp;
   }
-  const beams = new Map(); // key ('me' | propId) -> {line, dot}
+  // physgun beam: a real glowing beam (outer haze + bright core) instead of a
+  // 1px line, anchored at the gun muzzle
+  function makeBeamMesh() {
+    const g = new THREE.Group();
+    const geoOut = new THREE.CylinderGeometry(.03, .016, 1, 6, 1, true);
+    geoOut.rotateX(Math.PI / 2);
+    const geoIn = new THREE.CylinderGeometry(.011, .006, 1, 6, 1, true);
+    geoIn.rotateX(Math.PI / 2);
+    g.add(new THREE.Mesh(geoOut, new THREE.MeshBasicMaterial({ color: 0x35e0ff, transparent: true, opacity: .3, blending: THREE.AdditiveBlending, depthWrite: false })));
+    g.add(new THREE.Mesh(geoIn, new THREE.MeshBasicMaterial({ color: 0xd8f8ff, transparent: true, opacity: .85, blending: THREE.AdditiveBlending, depthWrite: false })));
+    g.renderOrder = 7;
+    return g;
+  }
+  const beams = new Map(); // key ('me' | id) -> {group, dot}
   const beamV = new THREE.Vector3();
+  const beamMid = new THREE.Vector3();
+  const beamV2 = new THREE.Vector3();
   function beamFor(key) {
     let b = beams.get(key);
     if (!b) {
-      const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
-      const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x35e0ff, transparent: true, opacity: .8, blending: THREE.AdditiveBlending, depthTest: false }));
-      line.renderOrder = 7;
-      line.frustumCulled = false;
+      const group = makeBeamMesh();
       const dot = glowDot();
-      scene.add(line, dot);
-      b = { line, dot };
+      scene.add(group, dot);
+      b = { group, dot };
       beams.set(key, b);
     }
     return b;
   }
-  function setBeam(key, from, to) {
+  function setBeam(key, from, to, alpha = 1) {
     const b = beamFor(key);
-    const pos = b.line.geometry.attributes.position;
-    pos.setXYZ(0, from.x, from.y, from.z);
-    pos.setXYZ(1, to.x, to.y, to.z);
-    pos.needsUpdate = true;
+    beamMid.addVectors(from, to).multiplyScalar(.5);
+    b.group.position.copy(beamMid);
+    b.group.lookAt(to);
+    const len = from.distanceTo(to);
+    b.group.scale.set(1, 1, Math.max(.001, len));
+    b.group.children[0].material.opacity = .3 * alpha;
+    b.group.children[1].material.opacity = .85 * alpha;
     b.dot.position.copy(to);
-  }
-  function myBeamFrom() {
-    if (fp) {
-      const dir = camera.getWorldDirection(beamV.set(0, 0, 0));
-      const from = camera.position.clone().addScaledVector(dir, .5);
-      from.y -= .18;
-      return from;
-    }
-    return myAvatar.heldAnchor.getWorldPosition(new THREE.Vector3());
+    b.dot.material.opacity = alpha;
   }
   function updateBeams() {
     const live = new Set();
     if (pgState.held) {
       live.add('me');
-      setBeam('me', myBeamFrom(), pgState.held.body.position);
-      beamFor('me').line.material.opacity = .8;
+      const aw = phys.anchorWorld(pgState.held, pgState.anchor, pgState.anchorOut);
+      setBeam('me', myBeamFrom(), beamV.set(aw.x, aw.y, aw.z), 1);
     } else if (pgState.lmb && pgEquipped()) {
       // gmod-style: the beam fires even with nothing grabbed, ending on
       // whatever the crosshair touches (dimmer — it isn't holding anything)
@@ -1215,20 +1355,19 @@ function start(token, user) {
         }
         if (!end) end = pgRay.ray.origin.clone().addScaledVector(pgRay.ray.direction, 20);
       }
-      setBeam('me', myBeamFrom(), end);
-      beamFor('me').line.material.opacity = .3;
+      setBeam('me', myBeamFrom(), end, .35);
     }
     for (const e of [...phys.props.values(), ...phys.cars.values()]) {
       if (e.grabbedBy && e.grabbedBy !== myId) {
         const o = others.get(e.grabbedBy);
         if (!o) continue;
         live.add(e.id);
-        setBeam(e.id, o.avatar.heldAnchor.getWorldPosition(beamV), e.body.position);
-        beamFor(e.id).line.material.opacity = .8;
+        const ip2 = e.body.interpolatedPosition;
+        setBeam(e.id, o.avatar.heldAnchor.getWorldPosition(beamV), beamV2.set(ip2.x, ip2.y, ip2.z), 1);
       }
     }
     for (const [key, b] of beams) {
-      if (!live.has(key)) { scene.remove(b.line, b.dot); beams.delete(key); }
+      if (!live.has(key)) { scene.remove(b.group, b.dot); beams.delete(key); }
     }
   }
 
@@ -1246,7 +1385,10 @@ function start(token, user) {
       if (e) { e.grabbedBy = m.by; e.owned = false; }
     } else if (m.op === 'drop') {
       const e = phys.props.get(m.id);
-      if (e) e.grabbedBy = null;
+      if (e) {
+        e.grabbedBy = null;
+        if (pgState.held === e) { physgunRelease(false); toast('🔒 Not yours — ask the owner to add you as a friend.'); }
+      }
     }
   });
 
@@ -1309,6 +1451,27 @@ function start(token, user) {
     $('stats-box').innerHTML = me.guest
       ? 'Guest session — create an account to save stats.'
       : `🏓 Pong wins: <b>${s.pongWins || 0}</b> · 🔴 Connect 4 wins: <b>${s.c4Wins || 0}</b> · ♟️ Chess wins: <b>${s.chessWins || 0}</b>`;
+  };
+  // friends whitelist (prop & base protection)
+  let myFriends = [];
+  function renderFriends() {
+    const el = $('friends-list');
+    el.innerHTML = '';
+    for (const f of myFriends) {
+      const chip = document.createElement('span');
+      chip.className = 'fr';
+      chip.textContent = f + ' ✕';
+      chip.title = 'remove';
+      chip.onclick = () => net.send({ t: 'friend', op: 'del', name: f });
+      el.appendChild(chip);
+    }
+    if (!myFriends.length) el.innerHTML = '<span style="color:#5d6b7a;font-size:.82rem">nobody yet — friends can move your props and open your doors</span>';
+  }
+  net.on('friends', (m) => { myFriends = m.list || []; renderFriends(); });
+  $('btn-friend-add').onclick = () => {
+    const v = $('friend-name').value.trim();
+    if (v) net.send({ t: 'friend', op: 'add', name: v });
+    $('friend-name').value = '';
   };
   $('btn-settings').onclick = openSettings;
   $('btn-settings2').onclick = openSettings; // the ⚙️ — same panel, graphics on top
@@ -1452,7 +1615,7 @@ function start(token, user) {
             toast(`${ITEMS[nearest.data.item].icon} ${ITEMS[nearest.data.item].name} → inventory`);
             beep(600, .06, 'sine', .1);
             if (nearest.data.item === 'physgun') // the sandbox manual comes with the tool
-              addChat('🧲 Hold left-click to grab (props & empty cars) · wheel push/pull · R spin · X delete · Q spawns props · H drops items · G leaves a permanent mark', 'sys');
+              addChat('🧲 Hold left-click to grab (props & empty cars) · wheel push/pull · R spin · X delete · C crafts props & tools · H drops items · G leaves a permanent mark', 'sys');
           }
           return;
         case 'dropitem':
@@ -1461,6 +1624,7 @@ function start(token, user) {
         case 'build': {
           const be = buildMap.get(nearest.data.build);
           if (!be) return;
+          if (be.b.kind === 'door') { net.send({ t: 'build', op: 'fade', id: be.b.id }); return; }
           if (be.b.tier !== 'wood') { toast('🧱 Already stone — solid.'); return; }
           if (invApi.count('stone') < 15) { toast('Need 15 🪨 to upgrade this to stone.'); return; }
           invApi.consume('stone', 15);
@@ -1663,7 +1827,8 @@ function start(token, user) {
         const tx3 = camera.position.x + dir2.x * pgState.dist;
         const ty3 = Math.max(.3, camera.position.y + dir2.y * pgState.dist);
         const tz3 = camera.position.z + dir2.z * pgState.dist;
-        let vx3 = (tx3 - b.position.x) * 10, vy3 = (ty3 - b.position.y) * 10, vz3 = (tz3 - b.position.z) * 10;
+        const aw = phys.anchorWorld(held, pgState.anchor, pgState.anchorOut);
+        let vx3 = (tx3 - aw.x) * 10, vy3 = (ty3 - aw.y) * 10, vz3 = (tz3 - aw.z) * 10;
         const vl = Math.hypot(vx3, vy3, vz3);
         if (vl > 22) { vx3 *= 22 / vl; vy3 *= 22 / vl; vz3 *= 22 / vl; }
         b.velocity.set(vx3, vy3, vz3);
@@ -1673,7 +1838,7 @@ function start(token, user) {
         if (input.keys.KeyR) b.angularVelocity.set(0, 2.8, 0);
         else {
           b.angularVelocity.set(0, 0, 0);
-          if (Math.abs(dyaw) > 1e-4) phys.yawBody(held, dyaw);
+          if (Math.abs(dyaw) > 1e-4) phys.yawBody(held, dyaw, pgState.anchor); // rotate about the grip point
         }
       }
     }
@@ -1775,6 +1940,27 @@ function start(token, user) {
       s.zz.position.y = .7 + Math.sin(s.t * 1.6) * .07;
       s.zz.material.opacity = .65 + Math.sin(s.t * 1.6) * .3;
     }
+    // NPCs walk toward their server targets with a simple gait
+    for (const n of npcMap.values()) {
+      n.t += dt;
+      const g = n.group;
+      const mvx = n.tx - g.position.x, mvz = n.tz - g.position.z;
+      const moving = Math.hypot(mvx, mvz) > .05;
+      g.position.x += mvx * Math.min(1, dt * 6);
+      g.position.z += mvz * Math.min(1, dt * 6);
+      let drN = n.try - g.rotation.y;
+      while (drN > Math.PI) drN -= Math.PI * 2;
+      while (drN < -Math.PI) drN += Math.PI * 2;
+      g.rotation.y += drN * Math.min(1, dt * 8);
+      const sw = moving ? Math.sin(n.t * (n.kind === 'chicken' ? 16 : 8)) * .5 : 0;
+      n.legs.forEach((leg, li) => { leg.rotation.x = sw * (li % 2 ? -1 : 1); });
+      if (n.kind === 'chicken' && n.head) n.head.position.z = .16 + (moving ? Math.sin(n.t * 16) * .05 : 0);
+      if (n.kind === 'zombie') {
+        n.arms.forEach((a, ai) => { a.rotation.x = Math.sin(n.t * 3 + ai) * .12; });
+        g.rotation.z = Math.sin(n.t * 2.2) * .04; // shamble
+      }
+    }
+
     // dropped items spin and bob, minecraft style
     for (const e of worldDrops.values()) {
       e.t += dt;
@@ -1837,12 +2023,11 @@ function start(token, user) {
       if (tr.ttl <= 0) { scene.remove(tr.line); tracers.splice(ti, 1); }
     }
     // build-placement ghost follows your aim while a piece is equipped
-    const bkind = (my.held === 'wall' || my.held === 'floor') && !carState.driving ? my.held : null;
-    ghosts.wall.visible = bkind === 'wall';
-    ghosts.floor.visible = bkind === 'floor';
+    const bkind = ITEMS[my.held]?.type === 'build' && !carState.driving ? my.held : null;
+    for (const k2 of ['wall', 'floor', 'door']) ghosts[k2].visible = bkind === k2;
     if (bkind) {
       const gp = ghostPose();
-      ghosts[bkind].position.set(gp.x, bkind === 'wall' ? 1.5 : .08, gp.z);
+      ghosts[bkind].position.set(gp.x, bkind === 'wall' ? 1.5 : bkind === 'door' ? 1.35 : .08, gp.z);
       ghosts[bkind].rotation.y = gp.ry;
     }
 
@@ -1887,7 +2072,7 @@ function start(token, user) {
   window.__brs = {
     my, mg, scene, W, phys, input, renderer, daylight, teleport: (x, z, yaw) => { my.x = x; my.z = z; if (yaw !== undefined) my.yaw = yaw; sendPos(true); },
     action: doAction, nearest: () => nearest?.id || nearestSeat?.id || null,
-    spawnProp, toggleSpawn, physgunGrab, physgunRelease, pgState, sleepers: sleeperMap, inv: invApi,
+    spawnProp, physgunGrab, physgunRelease, pgState, sleepers: sleeperMap, inv: invApi,
     drops: worldDrops, dropItem: dropItemInWorld, knockIt,
   };
 

@@ -158,6 +158,88 @@ for (const sig of ['SIGTERM', 'SIGINT']) {
   });
 }
 
+// death: spill everything, reset, respawn at the walkway — used by pvp AND npcs
+function killPlayer(t, byName) {
+  stats.kills++;
+  worldDirty = true;
+  spillInventory(t.key, t.x, t.z);
+  t.hp = 100;
+  t.x = 105 + Math.random() * 3; t.y = 0; t.z = -1 + Math.random() * 2;
+  if (t.ws.readyState === 1) t.ws.send(JSON.stringify({ t: 'died', by: byName, x: t.x, z: t.z }));
+  broadcast({ t: 'hp', id: t.id, hp: 100 });
+}
+
+// ---------- NPCs: pasture animals by the neighborhood, zombies after dark ----------
+const NPC_STATS = { cow: { hp: 40, speed: .9 }, chicken: { hp: 12, speed: 1.5 }, zombie: { hp: 50, speed: 2.3 } };
+const npcs = new Map(); // id -> {id, kind, x, z, ry, hp, hx, hz, tx, tz, atkT}
+let nextNpcId = 1;
+function spawnNpc(kind, x, z) {
+  const n = { id: nextNpcId++, kind, x, z, ry: Math.random() * 6.28, hp: NPC_STATS[kind].hp, hx: x, hz: z, tx: null, tz: null, atkT: 0 };
+  npcs.set(n.id, n);
+  return n;
+}
+for (let i = 0; i < 4; i++) spawnNpc('cow', 38 + i * 7, 148 + (i % 2) * 10);
+for (let i = 0; i < 5; i++) spawnNpc('chicken', 58 + i * 3.5, 156 + (i % 3) * 5);
+function dayFactorNow() { // must match lighting.js (skewed 8-min cycle)
+  const rawT = (Date.now() / 1000 % 480) / 480;
+  const t = rawT < .3 ? rawT / .3 * .5 : .5 + (rawT - .3) / .7 * .5;
+  const elev = -Math.cos(t * Math.PI * 2);
+  const k = Math.max(0, Math.min(1, (elev + .14) / .42));
+  return k * k * (3 - 2 * k);
+}
+function npcSnapshot() {
+  return [...npcs.values()].map(n => [n.id, n.kind, +n.x.toFixed(1), +n.z.toFixed(1), +n.ry.toFixed(2), n.hp]);
+}
+setInterval(() => { // 5Hz herd-and-horde tick
+  const night = dayFactorNow() < .22;
+  const zCount = [...npcs.values()].filter(n => n.kind === 'zombie').length;
+  if (night && players.size > 0 && zCount < 6 && Math.random() < .35) {
+    const ps = [...players.values()];
+    const t = ps[Math.floor(Math.random() * ps.length)];
+    const a = Math.random() * Math.PI * 2, r = 24 + Math.random() * 10;
+    spawnNpc('zombie', clampX(t.x + Math.cos(a) * r), clampZ(t.z + Math.sin(a) * r));
+    if (zCount === 0) sys('🧟 something is shuffling around out there…');
+  }
+  if (!night && zCount) { // sunrise burns them off
+    for (const [id, n] of npcs) if (n.kind === 'zombie') { npcs.delete(id); broadcast({ t: 'npc', op: 'del', id, burn: true }); }
+  }
+  // herd upkeep
+  if (Math.random() < .012) {
+    const cows = [...npcs.values()].filter(n => n.kind === 'cow').length;
+    const hens = [...npcs.values()].filter(n => n.kind === 'chicken').length;
+    if (cows < 4) spawnNpc('cow', 38 + Math.random() * 24, 148 + Math.random() * 14);
+    else if (hens < 5) spawnNpc('chicken', 56 + Math.random() * 16, 154 + Math.random() * 12);
+  }
+  const step = .2; // seconds per tick
+  for (const n of npcs.values()) {
+    const sp = NPC_STATS[n.kind].speed;
+    if (n.kind === 'zombie') {
+      let best = null, bd = 45;
+      for (const p of players.values()) { const dd = Math.hypot(p.x - n.x, p.z - n.z); if (dd < bd) { bd = dd; best = p; } }
+      if (best) {
+        n.ry = Math.atan2(best.x - n.x, best.z - n.z);
+        if (bd > 1.4) { n.x += Math.sin(n.ry) * sp * step; n.z += Math.cos(n.ry) * sp * step; }
+        else if (Date.now() - n.atkT > 1200) {
+          n.atkT = Date.now();
+          best.hp = (best.hp ?? 100) - 8;
+          if (best.hp <= 0) { killPlayer(best, 'a zombie'); sys(`🧟 ${best.name} got eaten by a zombie`); }
+          else broadcast({ t: 'hp', id: best.id, hp: best.hp, by: -1 });
+        }
+      }
+    } else { // graze around the home spot
+      if (n.tx == null || Math.hypot(n.tx - n.x, n.tz - n.z) < .6) {
+        if (Math.random() < .08) { n.tx = n.hx + (Math.random() - .5) * 26; n.tz = n.hz + (Math.random() - .5) * 20; }
+      } else {
+        n.ry = Math.atan2(n.tx - n.x, n.tz - n.z);
+        n.x += Math.sin(n.ry) * sp * step;
+        n.z += Math.cos(n.ry) * sp * step;
+      }
+    }
+    n.x = clampX(n.x); n.z = clampZ(n.z);
+  }
+  if (players.size) broadcast({ t: 'npcs', d: npcSnapshot() });
+}, 200);
+
 // a victim's whole inventory scatters on the floor around where they fell
 function spillInventory(key, x, z) {
   const u = store.getInventory(key);
@@ -224,6 +306,8 @@ wss.on('connection', (ws, req) => {
     cars,
     sleepers: [...sleepers.values()],
     props: [...props.values()],
+    npcs: npcSnapshot(),
+    friends: store.getFriends(user.key),
     online: players.size,
   }));
   if (slept) broadcast({ t: 'wake', key: user.key }, id);
@@ -412,7 +496,7 @@ function handle(p, m) {
         if (!KINDS.includes(m.kind)) return;
         const pos = Array.isArray(m.p) ? m.p.map(Number) : [];
         if (pos.length !== 3 || !pos.every(Number.isFinite)) return;
-        const prop = { id: 'fp' + nextPhysId++, kind: m.kind, p: [clampX(pos[0]), Math.max(0, Math.min(30, pos[1])), clampZ(pos[2])], q: [0, 0, 0, 1] };
+        const prop = { id: 'fp' + nextPhysId++, kind: m.kind, p: [clampX(pos[0]), Math.max(0, Math.min(30, pos[1])), clampZ(pos[2])], q: [0, 0, 0, 1], owner: p.key };
         props.set(prop.id, prop);
         stats.props++;
         worldDirty = true;
@@ -420,6 +504,7 @@ function handle(p, m) {
       } else if (m.op === 'state') {
         const pr = props.get(String(m.id));
         if (!pr) return;
+        if (pr.owner && !store.isFriend(pr.owner, p.key)) return; // prop protection
         const pos = Array.isArray(m.p) ? m.p.map(Number) : [];
         const q = Array.isArray(m.q) ? m.q.map(Number) : [];
         if (pos.length !== 3 || !pos.every(Number.isFinite) || q.length !== 4 || !q.every(Number.isFinite)) return;
@@ -431,10 +516,16 @@ function handle(p, m) {
       } else if (m.op === 'grab' || m.op === 'drop') {
         const pr = props.get(String(m.id));
         if (!pr) return;
+        if (m.op === 'grab' && pr.owner && !store.isFriend(pr.owner, p.key)) {
+          if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'sys', text: '🔒 That prop belongs to someone else (they can add you as a friend).' }));
+          broadcast({ t: 'prop', op: 'drop', id: pr.id }, null); // force-release on their client
+          return;
+        }
         broadcast({ t: 'prop', op: m.op, id: pr.id, by: p.id }, p.id);
       } else if (m.op === 'del') {
         const pr = props.get(String(m.id));
         if (!pr) return;
+        if (pr.owner && !store.isFriend(pr.owner, p.key)) return;
         props.delete(pr.id);
         worldDirty = true;
         broadcast({ t: 'prop', op: 'del', id: pr.id });
@@ -485,13 +576,13 @@ function handle(p, m) {
         if (now - (p.lastBuild || 0) < 400) return;
         p.lastBuild = now;
         if (builds.size >= 300) { if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'sys', text: '🧱 Build limit reached (300).' })); return; }
-        if (!['wall', 'floor'].includes(m.kind)) return;
+        if (!['wall', 'floor', 'door'].includes(m.kind)) return;
         const pos = Array.isArray(m.p) ? m.p.map(Number) : [];
         if (pos.length !== 3 || !pos.every(Number.isFinite) || !Number.isFinite(+m.ry)) return;
         const b = {
           id: 'b' + nextBuildId++, kind: m.kind, tier: 'wood',
           p: [clampX(pos[0]), Math.max(0, Math.min(12, pos[1])), clampZ(pos[2])],
-          ry: +(+m.ry).toFixed(3), hp: BUILD_HP.wood, owner: p.key,
+          ry: +(+m.ry).toFixed(3), hp: m.kind === 'door' ? 150 : BUILD_HP.wood, owner: p.key,
         };
         builds.set(b.id, b);
         worldDirty = true;
@@ -499,6 +590,10 @@ function handle(p, m) {
       } else if (m.op === 'hit') {
         const b = builds.get(String(m.id));
         if (!b) return;
+        if (b.owner && !store.isFriend(b.owner, p.key)) { // base protection
+          if (p.ws.readyState === 1 && Math.random() < .3) p.ws.send(JSON.stringify({ t: 'sys', text: '🔒 Protected base — only the owner and their friends can touch it.' }));
+          return;
+        }
         const BDMG = { axe: 10, stoneaxe: 14, pickaxe: 12, stonepick: 16, pistol: 15, wrench: 8 };
         const dmg = BDMG[String(m.item)] ?? 4;
         if (Math.hypot(p.x - b.p[0], p.z - b.p[2]) > (m.item === 'pistol' ? 50 : 4.5)) return;
@@ -508,14 +603,31 @@ function handle(p, m) {
           builds.delete(b.id);
           broadcast({ t: 'build', op: 'del', id: b.id });
         } else broadcast({ t: 'build', op: 'hp', id: b.id, hp: b.hp });
+      } else if (m.op === 'fade') { // gmod fading door
+        const b = builds.get(String(m.id));
+        if (!b || b.kind !== 'door') return;
+        if (b.owner && !store.isFriend(b.owner, p.key)) {
+          if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'sys', text: '🔒 Locked — this door only opens for its owner and their friends.' }));
+          return;
+        }
+        broadcast({ t: 'build', op: 'fade', id: b.id });
       } else if (m.op === 'upgrade') {
         const b = builds.get(String(m.id));
-        if (!b || b.tier !== 'wood') return;
+        if (!b || b.tier !== 'wood' || b.kind === 'door') return;
+        if (b.owner && !store.isFriend(b.owner, p.key)) return;
         b.tier = 'stone';
         b.hp = BUILD_HP.stone;
         worldDirty = true;
         broadcast({ t: 'build', op: 'upgrade', id: b.id, tier: 'stone', hp: b.hp });
       }
+      break;
+    }
+    case 'friend': { // build/prop protection whitelist
+      let list = null;
+      if (m.op === 'add') list = store.addFriend(p.key, m.name);
+      else if (m.op === 'del') list = store.delFriend(p.key, m.name);
+      else list = store.getFriends(p.key);
+      if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'friends', list: list || store.getFriends(p.key) }));
       break;
     }
     case 'burn': { // hall-of-records bookkeeping for the barrel
@@ -534,6 +646,25 @@ function handle(p, m) {
       const hs = weapon === 'pistol' && m.hs === true;
       if (hs) dmg *= 2; // headshot
       const maxRange = weapon === 'pistol' ? 55 : 3.4;
+      if (m.npc) { // hunting & zombie-slaying
+        const n = npcs.get(Number(m.npc));
+        if (!n) return;
+        if (Math.hypot(p.x - n.x, p.z - n.z) > maxRange) return;
+        n.hp -= dmg;
+        if (n.hp > 0) { broadcast({ t: 'npc', op: 'hurt', id: n.id }); return; }
+        npcs.delete(n.id);
+        broadcast({ t: 'npc', op: 'del', id: n.id });
+        const loot = n.kind === 'cow' ? [['food', 2]] : n.kind === 'chicken' ? [['food', 1]] : [['stone', 5], ['wood', 3]];
+        for (const [item, cnt] of loot) {
+          if (drops.size >= 200) break;
+          const d = { id: 'd' + nextDropId++, item, n: cnt, x: clampX(+(n.x + (Math.random() - .5)).toFixed(2)), y: .35, z: clampZ(+(n.z + (Math.random() - .5)).toFixed(2)) };
+          drops.set(d.id, d);
+          broadcast({ t: 'drop', op: 'add', d });
+        }
+        worldDirty = true;
+        if (n.kind === 'zombie') sys(`🧟 ${p.name} put down a zombie`);
+        return;
+      }
       const label = weapon === 'fists' ? 'their fists' : `a ${weapon}`;
       if (m.sleeper) { // sleepers are fair game — brutal, but this place remembers
         const key = String(m.sleeper);
@@ -559,13 +690,7 @@ function handle(p, m) {
         return;
       }
       // death: everything they carried spills where they fell, then respawn
-      stats.kills++;
-      worldDirty = true;
-      spillInventory(t.key, t.x, t.z);
-      t.hp = 100;
-      t.x = 105 + Math.random() * 3; t.y = 0; t.z = -1 + Math.random() * 2;
-      if (t.ws.readyState === 1) t.ws.send(JSON.stringify({ t: 'died', by: p.name, x: t.x, z: t.z }));
-      broadcast({ t: 'hp', id: t.id, hp: 100 });
+      killPlayer(t, p.name);
       sys(`💀 ${p.name} clocked ${t.name} with ${label} — their stuff hit the floor`);
       break;
     }

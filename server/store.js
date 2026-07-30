@@ -126,7 +126,8 @@ export function setAppearance(key, ap) {
 
 export const ITEM_IDS = ['chips','soda','candy','coffee','energy','water','food',
   'paddle','broom','tapegun','tube','wrench','banana','physgun','flashlight',
-  'wood','stone','axe','pickaxe','stoneaxe','stonepick','pistol','wall','floor',
+  'wood','stone','axe','pickaxe','stoneaxe','stonepick','pistol','wall','floor','door',
+  'box','crate','ball','barrel','melon','cone',
   'hat-cap','hat-beanie','hat-hardhat','vest-yellow','vest-orange','vest-green','vest-blue','vest-pink'];
 export function setInventory(key, inv, hotbar) {
   const u = users[key] || guests.get(key);
@@ -158,6 +159,35 @@ export function addWin(key, stat) {
   u.stats = u.stats || {};
   u.stats[stat] = (u.stats[stat] || 0) + 1;
   saveSoon();
+}
+
+// ---------- friends / build-protection whitelist ----------
+export function addFriend(key, friendName) {
+  const u = users[key] || guests.get(key);
+  const fk = String(friendName || '').trim().toLowerCase();
+  if (!u || !fk || fk === key || fk.length > 20) return null;
+  u.friends = u.friends || [];
+  if (!u.friends.includes(fk)) u.friends.push(fk);
+  if (u.friends.length > 30) u.friends.shift();
+  saveSoon();
+  return u.friends;
+}
+export function delFriend(key, friendName) {
+  const u = users[key] || guests.get(key);
+  const fk = String(friendName || '').trim().toLowerCase();
+  if (!u || !u.friends) return u?.friends || [];
+  u.friends = u.friends.filter(f => f !== fk);
+  saveSoon();
+  return u.friends;
+}
+export function getFriends(key) {
+  const u = users[key] || guests.get(key);
+  return u?.friends || [];
+}
+export function isFriend(ownerKey, otherKey) {
+  if (!ownerKey || ownerKey === otherKey) return true;
+  const u = users[ownerKey] || guests.get(ownerKey);
+  return !!u?.friends?.includes(otherKey);
 }
 
 export function getInventory(key) {

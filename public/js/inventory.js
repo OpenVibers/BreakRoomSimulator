@@ -29,6 +29,13 @@ export const ITEMS = {
   pistol:    { name: 'Pistol',      icon: '🔫', type: 'gun' },
   wall:      { name: 'Wood wall',   icon: '🧱', type: 'build' },
   floor:     { name: 'Wood floor',  icon: '🟫', type: 'build' },
+  door:      { name: 'Fading door', icon: '🚪', type: 'build' },
+  box:       { name: 'Amazon box',  icon: '📦', type: 'prop' },
+  crate:     { name: 'Wood crate',  icon: '🪵', type: 'prop' },
+  ball:      { name: 'Kickball',    icon: '🔴', type: 'prop' },
+  barrel:    { name: 'Barrel',      icon: '🛢️', type: 'prop' },
+  melon:     { name: 'Watermelon',  icon: '🍉', type: 'prop' },
+  cone:      { name: 'Traffic cone', icon: '🚧', type: 'prop' },
   'hat-cap':     { name: 'Cap',      icon: '🧢', type: 'clothes', ap: { hat: 1 } },
   'hat-beanie':  { name: 'Beanie',   icon: '👒', type: 'clothes', ap: { hat: 2 } },
   'hat-hardhat': { name: 'Hard hat', icon: '⛑️', type: 'clothes', ap: { hat: 3 } },
@@ -134,7 +141,7 @@ export function initInventory({ me, onEquip, onWear, onDropItem, toast }) {
     }
     if (to.arr === from.arr && to.i === from.i) return;
     const a = from.arr[from.i], b = to.arr[to.i];
-    if (b && a && b.id === a.id && ['food', 'mat', 'build'].includes(ITEMS[a.id].type)) { // stack
+    if (b && a && b.id === a.id && ['food', 'mat', 'build', 'prop'].includes(ITEMS[a.id].type)) { // stack
       b.n += a.n; from.arr[from.i] = null;
     } else {
       from.arr[from.i] = b || null;
@@ -179,7 +186,7 @@ export function initInventory({ me, onEquip, onWear, onDropItem, toast }) {
 
   // ---------- API ----------
   function findRoom(id) {
-    const stack = ['food', 'mat', 'build'].includes(ITEMS[id].type);
+    const stack = ['food', 'mat', 'build', 'prop'].includes(ITEMS[id].type);
     if (stack) {
       const h = inv.hotbar.find(s => s?.id === id);
       if (h) return h;

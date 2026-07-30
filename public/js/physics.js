@@ -155,6 +155,8 @@ export function initPhysics(scene) {
     body.addShape(new CANNON.Box(new CANNON.Vec3(hw * .86, .24, hl * .52)), new CANNON.Vec3(0, CAR_HH + .2, -.2));
     body.position.set(car.x, CAR_HH + .05, car.z);
     body.quaternion.setFromEuler(0, car.ry, 0);
+    body.interpolatedPosition.copy(body.position);
+    body.interpolatedQuaternion.copy(body.quaternion);
     body.sleepSpeedLimit = .35;
     body.sleepTimeLimit = .6;
     body.sleep();
@@ -225,6 +227,8 @@ export function initPhysics(scene) {
     if (snap) {
       e.body.position.copy(e.rp);
       e.body.quaternion.copy(e.rq);
+      e.body.interpolatedPosition.copy(e.rp);
+      e.body.interpolatedQuaternion.copy(e.rq);
       e.body.velocity.setZero();
       e.body.angularVelocity.setZero();
       e.remote = false;
@@ -254,6 +258,8 @@ export function initPhysics(scene) {
     body.quaternion.set(prop.q[0], prop.q[1], prop.q[2], prop.q[3]);
     body.sleepSpeedLimit = .4;
     body.sleepTimeLimit = .5;
+    body.interpolatedPosition.copy(body.position);
+    body.interpolatedQuaternion.copy(body.quaternion);
     if (!mine) body.sleep(); // server-restored / remote props start at rest
     world.addBody(body);
     const mesh = def.build();
@@ -285,6 +291,8 @@ export function initPhysics(scene) {
     e.owned = false;
     e.body.position.set(m.p[0], m.p[1], m.p[2]);
     e.body.quaternion.set(m.q[0], m.q[1], m.q[2], m.q[3]);
+    e.body.interpolatedPosition.copy(e.body.position);
+    e.body.interpolatedQuaternion.copy(e.body.quaternion);
     if (m.v) e.body.velocity.set(m.v[0], m.v[1], m.v[2]);
     e.body.wakeUp();
   }
@@ -428,11 +436,33 @@ export function initPhysics(scene) {
     return null;
   }
 
-  // gmod-style: rotate a held body's yaw in place (view-follow / R-spin)
+  // gmod-style physgun grip: the grab anchor is WHERE you clicked the object,
+  // not its center — store it body-local, drag that point to the crosshair
   const yawQ = new CANNON.Quaternion();
-  function yawBody(e, dyaw) {
+  const invQ = new CANNON.Quaternion();
+  function grabLocal(e, wx, wy, wz) {
+    const b = e.body;
+    e.body.quaternion.conjugate(invQ); // unit quat: conjugate == inverse
+    const rel = new CANNON.Vec3(wx - b.position.x, wy - b.position.y, wz - b.position.z);
+    return invQ.vmult(rel);
+  }
+  const anchorTmp = new CANNON.Vec3();
+  function anchorWorld(e, local, out) {
+    e.body.quaternion.vmult(local, anchorTmp);
+    out.set(e.body.position.x + anchorTmp.x, e.body.position.y + anchorTmp.y, e.body.position.z + anchorTmp.z);
+    return out;
+  }
+  function yawBody(e, dyaw, local = null) {
+    const b = e.body;
     yawQ.setFromAxisAngle(V(0, 1, 0), dyaw);
-    yawQ.mult(e.body.quaternion, e.body.quaternion);
+    if (local) { // rotate ABOUT the grab anchor, like gmod
+      const aw = new CANNON.Vec3();
+      b.quaternion.vmult(local, anchorTmp);
+      aw.set(b.position.x + anchorTmp.x, b.position.y + anchorTmp.y, b.position.z + anchorTmp.z);
+      yawQ.mult(b.quaternion, b.quaternion);
+      b.quaternion.vmult(local, anchorTmp);
+      b.position.set(aw.x - anchorTmp.x, aw.y - anchorTmp.y, aw.z - anchorTmp.z);
+    } else yawQ.mult(b.quaternion, b.quaternion);
   }
 
   // dynamically placed base pieces need real static bodies (cars must crash
@@ -450,7 +480,7 @@ export function initPhysics(scene) {
 
   return {
     world, props, cars, add, remove, claim, applyState, applyCarState, sendState, sendCarState,
-    drive, step, smack, raycast, yawBody, addStatic, removeStatic, PHYS_KINDS,
+    drive, step, smack, raycast, yawBody, grabLocal, anchorWorld, addStatic, removeStatic, PHYS_KINDS,
     setMyId(id) { myId = id; },
   };
 }
