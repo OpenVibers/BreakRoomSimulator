@@ -224,7 +224,7 @@ function start(token, user) {
       myAvatar.setHeld(item);
       net.send({ t: 'held', item });
       updateViewmodel();
-      if (item === 'physgun') toast('🧲 Hold left-click on a prop or empty car to grab · wheel push/pull · R spin · X delete', 4600);
+      if (item === 'physgun') toast('🧲 Hold left-click to grab · wheel push/pull · hold E + mouse to rotate · right-click freezes · X takes yours back', 5200);
     },
     onWear: (def) => {
       if (def.ap) { me.ap = { ...(me.ap || {}), ...def.ap }; rebuildMyAvatar(); net.send({ t: 'appear', ap: me.ap }); }
@@ -440,7 +440,7 @@ function start(token, user) {
   function useKey() {
     const r = invApi.useSelected();
     if (!r) { doSwing(); return; } // nothing selected: throw hands
-    if (r.melee === 'physgun') { toast('🧲 Hold left-click to grab · wheel push/pull · R spin · X delete'); return; }
+    if (r.melee === 'physgun') { toast('🧲 Hold left-click to grab · wheel push/pull · hold E + mouse rotates · right-click freezes · X takes yours back'); return; }
     if (r.melee === 'flashlight') { toast('🔦 Lights wherever you look — best after dark.'); return; }
     if (ITEMS[r.melee]?.type === 'gun') { firePistol(); return; }
     if (ITEMS[r.melee]?.type === 'build') { placeBuild(); return; }
@@ -467,7 +467,13 @@ function start(token, user) {
     else if (e.code === 'KeyC') toggleCraft();
     else if (e.code === 'KeyG') { e.preventDefault(); openTag(); }
     else if (e.code === 'KeyH') { const dropId = invApi.dropSelected(); if (dropId) { dropItemInWorld(dropId); beep(340, .05, 'sine', .07); } }
-    else if (e.code === 'KeyX' && pgState.held && !pgState.held.isCar) net.send({ t: 'prop', op: 'del', id: pgState.held.id });
+    else if (e.code === 'KeyX' && pgState.held && !pgState.held.isCar) {
+      const heldX = pgState.held;
+      pgState.takePending = heldX.id + ':' + heldX.kind;
+      physgunRelease(false);
+      pgState.lmb = false;
+      net.send({ t: 'prop', op: 'del', id: heldX.id }); // server deletes only for owner/friends
+    }
   });
 
   // ---------- chat ----------
@@ -1294,9 +1300,9 @@ function start(token, user) {
     }
     return best;
   }
-  function physgunGrab() {
+  function physgunGrab(hitOpt = null) {
     if (!pgEquipped() || pgState.held) return;
-    const hit = pgPick();
+    const hit = hitOpt || pgPick();
     if (!hit) return;
     if (hit.e.frozen) phys.setFrozen(hit.e, false); // thaw to move (server re-freezes on veto)
     pgState.held = hit.e;
@@ -1345,6 +1351,7 @@ function start(token, user) {
       const fp = [+b.position.x.toFixed(2), +b.position.y.toFixed(2), +b.position.z.toFixed(2)];
       const fq = [+b.quaternion.x.toFixed(3), +b.quaternion.y.toFixed(3), +b.quaternion.z.toFixed(3), +b.quaternion.w.toFixed(3)];
       physgunRelease(false);
+      pgState.lmb = false; // fresh click required — no instant re-grab
       phys.setFrozen(held, true);
       net.send({ t: 'prop', op: 'freeze', id: held.id, frozen: true, p: fp, q: fq });
       toast('🧊 Frozen in place — physgun-grab it to move it again.');
@@ -1411,6 +1418,8 @@ function start(token, user) {
       const aw = phys.anchorWorld(pgState.held, pgState.anchor, pgState.anchorOut);
       setBeam('me', myBeamFrom(), beamV.set(aw.x, aw.y, aw.z), 1);
     } else if (pgState.lmb && pgEquipped()) {
+      physgunGrab(); // sweep the beam onto something and it latches on
+      if (pgState.held) { updateBeams(); return; }
       // gmod-style: the beam fires even with nothing grabbed, ending on
       // whatever the crosshair touches (dimmer — it isn't holding anything)
       live.add('me');
@@ -1452,6 +1461,12 @@ function start(token, user) {
     } else if (m.op === 'state') phys.applyState(m);
     else if (m.op === 'del') {
       if (pgState.held?.id === m.id) physgunRelease(false);
+      if (pgState.takePending?.startsWith(m.id + ':')) { // confirmed: back to my pockets
+        const kind = pgState.takePending.split(':')[1];
+        pgState.takePending = null;
+        if (ITEMS[kind]) { invApi.add(kind); toast(`${ITEMS[kind].icon} ${ITEMS[kind].name} → inventory`); }
+        beep(640, .07, 'sine', .1);
+      }
       phys.remove(m.id);
     } else if (m.op === 'grab') {
       const e = phys.props.get(m.id);
@@ -1460,7 +1475,7 @@ function start(token, user) {
       const e = phys.props.get(m.id);
       if (e) {
         e.grabbedBy = null;
-        if (pgState.held === e) { physgunRelease(false); toast('🔒 Not yours — ask the owner to add you as a friend.'); }
+        if (pgState.held === e) { physgunRelease(false); pgState.lmb = false; toast('🔒 Not yours — ask the owner to add you as a friend.'); }
       }
     } else if (m.op === 'freeze') {
       const e = phys.props.get(m.id);
@@ -1718,7 +1733,7 @@ function start(token, user) {
             toast(`${ITEMS[nearest.data.item].icon} ${ITEMS[nearest.data.item].name} → inventory`);
             beep(600, .06, 'sine', .1);
             if (nearest.data.item === 'physgun') // the sandbox manual comes with the tool
-              addChat('🧲 Hold left-click to grab (props & empty cars) · wheel push/pull · R spin · X delete · C crafts props & tools · H drops items · G leaves a permanent mark', 'sys');
+              addChat('🧲 Hold left-click to grab (props & empty cars) · wheel push/pull · hold E + mouse rotates · right-click freezes in place · X takes your prop back · C crafts', 'sys');
           }
           return;
         case 'dropitem':
@@ -1818,6 +1833,13 @@ function start(token, user) {
     requestAnimationFrame(frame);
     const dt = Math.min(clock.getDelta(), .05);
 
+    // physgun rotate mode: hold E while carrying — the mouse turns the OBJECT
+    if (pgState.held && input.keys.KeyE && !pgState.held.isCar) {
+      const rdx = input.lookDX * .005, rdy = input.lookDY * .005;
+      input.lookDX = 0; input.lookDY = 0; // eaten: camera stays put
+      if (rdx) phys.yawBody(pgState.held, -rdx, pgState.anchor);
+      if (rdy) phys.rotateBody(pgState.held, Math.cos(my.yaw), 0, -Math.sin(my.yaw), -rdy, pgState.anchor);
+    }
     // look (sensitivity + optional inverted Y; FP allows full look up/down)
     my.lookVX = input.lookDX;
     my.yaw -= input.lookDX * .0028 * cfg.sens;
@@ -1832,7 +1854,10 @@ function start(token, user) {
     const running = input.keys.ShiftLeft || input.keys.ShiftRight || (kv === input.move && Math.hypot(kv.x, kv.y) > .92);
     const mvLen = Math.hypot(kv.x, kv.y);
 
-    if (input.actionQueued) { input.actionQueued = false; doAction(); }
+    if (input.actionQueued) {
+      input.actionQueued = false;
+      if (!pgState.held) doAction(); // E while carrying = rotate mode, not interact
+    }
     if (input.jumpQueued) {
       input.jumpQueued = false;
       if (carState.driving) { /* Space is the handbrake while driving */ }
@@ -1941,11 +1966,8 @@ function start(token, user) {
         // gmod grip: the object turns with your view and otherwise holds its pose
         const dyaw = my.yaw - (pgState.lastYaw ?? my.yaw);
         pgState.lastYaw = my.yaw;
-        if (input.keys.KeyR) b.angularVelocity.set(0, 2.8, 0);
-        else {
-          b.angularVelocity.set(0, 0, 0);
-          if (Math.abs(dyaw) > 1e-4) phys.yawBody(held, dyaw, pgState.anchor); // rotate about the grip point
-        }
+        b.angularVelocity.set(0, 0, 0);
+        if (!input.keys.KeyE && Math.abs(dyaw) > 1e-4) phys.yawBody(held, dyaw, pgState.anchor); // view-follow (E = manual rotate instead)
       }
     }
     phys.step(dt, my);

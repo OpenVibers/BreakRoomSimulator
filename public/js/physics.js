@@ -524,6 +524,18 @@ export function initPhysics(scene) {
     out.set(e.body.position.x + anchorTmp.x, e.body.position.y + anchorTmp.y, e.body.position.z + anchorTmp.z);
     return out;
   }
+  function rotateBody(e, ax, ay, az, angle, local = null) { // world-axis rotation about the grab anchor
+    const b = e.body;
+    yawQ.setFromAxisAngle(V(ax, ay, az), angle);
+    if (local) {
+      const aw = new CANNON.Vec3();
+      b.quaternion.vmult(local, anchorTmp);
+      aw.set(b.position.x + anchorTmp.x, b.position.y + anchorTmp.y, b.position.z + anchorTmp.z);
+      yawQ.mult(b.quaternion, b.quaternion);
+      b.quaternion.vmult(local, anchorTmp);
+      b.position.set(aw.x - anchorTmp.x, aw.y - anchorTmp.y, aw.z - anchorTmp.z);
+    } else yawQ.mult(b.quaternion, b.quaternion);
+  }
   function yawBody(e, dyaw, local = null) {
     const b = e.body;
     yawQ.setFromAxisAngle(V(0, 1, 0), dyaw);
@@ -552,7 +564,7 @@ export function initPhysics(scene) {
 
   return {
     world, props, cars, add, remove, claim, applyState, applyCarState, sendState, sendCarState,
-    drive, step, smack, raycast, yawBody, grabLocal, anchorWorld, addStatic, removeStatic, setFrozen, PHYS_KINDS,
+    drive, step, smack, raycast, yawBody, rotateBody, grabLocal, anchorWorld, addStatic, removeStatic, setFrozen, PHYS_KINDS,
     setMyId(id) { myId = id; },
   };
 }
