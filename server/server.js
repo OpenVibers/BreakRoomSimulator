@@ -104,16 +104,19 @@ for (const [cid, c] of Object.entries(savedWorld.cars || {})) {
   }
 }
 let nextPhysId = [...props.keys()].reduce((m, id) => Math.max(m, Number(String(id).slice(2)) || 0), 0) + 1;
+// legacy static builds become FROZEN props (darkrp-style: everything is a prop)
+for (const b of Object.values(savedWorld.builds || {})) {
+  if (!['wall', 'floor', 'door'].includes(b.kind) || !Array.isArray(b.p)) continue;
+  const h = (b.ry || 0) / 2;
+  const id = 'fp' + nextPhysId++;
+  props.set(id, { id, kind: b.kind, p: b.p, q: [0, +Math.sin(h).toFixed(3), 0, +Math.cos(h).toFixed(3)], owner: b.owner || null, frozen: true });
+}
 // dropped items lying on the floor — minecraft style, persisted like all else
 const drops = new Map(Object.entries(savedWorld.drops || {})); // id -> {id, item, n, x, y, z}
 for (const [id, d] of drops) { // sweep anything that ever ended up outside the world
   if (!Number.isFinite(d?.x) || !Number.isFinite(d?.z) || !(d.y >= 0 && d.y <= 8)) drops.delete(id);
 }
 let nextDropId = [...drops.keys()].reduce((m, id) => Math.max(m, Number(String(id).slice(1)) || 0), 0) + 1;
-// base-building pieces: walls/floors with hp, wood→stone upgrades. Persisted.
-const builds = new Map(Object.entries(savedWorld.builds || {})); // id -> {id, kind, tier, p:[x,y,z], ry, hp, owner}
-let nextBuildId = [...builds.keys()].reduce((m, id) => Math.max(m, Number(String(id).slice(1)) || 0), 0) + 1;
-const BUILD_HP = { wood: 200, stone: 500 };
 // permanent marker tags — the "I was here" layer. They outlive everyone.
 const tags = Array.isArray(savedWorld.tags) ? savedWorld.tags : [];
 let nextTagId = tags.reduce((m, t) => Math.max(m, Number(String(t.id).slice(1)) || 0), 0) + 1;
@@ -135,7 +138,7 @@ let worldDirty = false;
 function saveWorld() {
   worldDirty = false;
   const tmp = WORLD_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify({ sleepers: Object.fromEntries(sleepers), cars, props: Object.fromEntries(props), drops: Object.fromEntries(drops), builds: Object.fromEntries(builds), tags, stats }));
+  fs.writeFileSync(tmp, JSON.stringify({ sleepers: Object.fromEntries(sleepers), cars, props: Object.fromEntries(props), drops: Object.fromEntries(drops), tags, stats }));
   fs.renameSync(tmp, WORLD_FILE); // atomic: a crash mid-write can't corrupt the state
 }
 setInterval(() => { if (worldDirty) saveWorld(); }, 10000);
@@ -301,7 +304,6 @@ wss.on('connection', (ws, req) => {
     hp: p.hp,
     tags,
     drops: [...drops.values()],
-    builds: [...builds.values()],
     mapEdits,
     players: [...players.values()].filter(q => q.id !== id).map(pubState),
     c4: { a: c4.a.state(), b: c4.b.state() },
@@ -497,18 +499,20 @@ function handle(p, m) {
         if (now - (p.lastSpawn || 0) < 250) return;
         p.lastSpawn = now;
         if (props.size >= 150) { if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'sys', text: '📦 Prop limit reached (150) — grab some with the physgun and press X to clear them.' })); return; }
-        const KINDS = ['box', 'crate', 'ball', 'barrel', 'melon', 'cone'];
+        const KINDS = ['box', 'crate', 'ball', 'barrel', 'melon', 'cone', 'wall', 'floor', 'door'];
         if (!KINDS.includes(m.kind)) return;
         const pos = Array.isArray(m.p) ? m.p.map(Number) : [];
         if (pos.length !== 3 || !pos.every(Number.isFinite)) return;
-        const prop = { id: 'fp' + nextPhysId++, kind: m.kind, p: [clampX(pos[0]), Math.max(0, Math.min(30, pos[1])), clampZ(pos[2])], q: [0, 0, 0, 1], owner: p.key };
+        let q = [0, 0, 0, 1];
+        if (Array.isArray(m.q) && m.q.length === 4 && m.q.every(Number.isFinite)) q = m.q.map(n => +(+n).toFixed(3));
+        const prop = { id: 'fp' + nextPhysId++, kind: m.kind, p: [clampX(pos[0]), Math.max(0, Math.min(30, pos[1])), clampZ(pos[2])], q, owner: p.key, frozen: m.frozen === true };
         props.set(prop.id, prop);
         stats.props++;
         worldDirty = true;
         broadcast({ t: 'prop', op: 'add', prop, owner: p.id });
       } else if (m.op === 'state') {
         const pr = props.get(String(m.id));
-        if (!pr) return;
+        if (!pr || pr.frozen) return;
         if (pr.owner && !store.isFriend(pr.owner, p.key)) return; // prop protection
         const pos = Array.isArray(m.p) ? m.p.map(Number) : [];
         const q = Array.isArray(m.q) ? m.q.map(Number) : [];
@@ -524,9 +528,34 @@ function handle(p, m) {
         if (m.op === 'grab' && pr.owner && !store.isFriend(pr.owner, p.key)) {
           if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'sys', text: '🔒 That prop belongs to someone else (they can add you as a friend).' }));
           broadcast({ t: 'prop', op: 'drop', id: pr.id }, null); // force-release on their client
+          if (pr.frozen) broadcast({ t: 'prop', op: 'freeze', id: pr.id, frozen: true, p: pr.p, q: pr.q }); // resync
           return;
         }
+        if (m.op === 'grab' && pr.frozen) { // owner grabbing = unfreeze
+          pr.frozen = false;
+          worldDirty = true;
+          broadcast({ t: 'prop', op: 'freeze', id: pr.id, frozen: false, p: pr.p, q: pr.q });
+        }
         broadcast({ t: 'prop', op: m.op, id: pr.id, by: p.id }, p.id);
+      } else if (m.op === 'freeze') {
+        const pr = props.get(String(m.id));
+        if (!pr) return;
+        if (pr.owner && !store.isFriend(pr.owner, p.key)) return;
+        pr.frozen = m.frozen === true;
+        const pos = Array.isArray(m.p) ? m.p.map(Number) : null;
+        const q = Array.isArray(m.q) ? m.q.map(Number) : null;
+        if (pos?.length === 3 && pos.every(Number.isFinite)) pr.p = [clampX(+pos[0].toFixed(2)), Math.max(0, Math.min(30, +pos[1].toFixed(2))), clampZ(+pos[2].toFixed(2))];
+        if (q?.length === 4 && q.every(Number.isFinite)) pr.q = q.map(n => +n.toFixed(3));
+        worldDirty = true;
+        broadcast({ t: 'prop', op: 'freeze', id: pr.id, frozen: pr.frozen, p: pr.p, q: pr.q });
+      } else if (m.op === 'fade') { // gmod fading door (prop edition)
+        const pr = props.get(String(m.id));
+        if (!pr || pr.kind !== 'door') return;
+        if (pr.owner && !store.isFriend(pr.owner, p.key)) {
+          if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'sys', text: '🔒 Locked — this door only opens for its owner and their friends.' }));
+          return;
+        }
+        broadcast({ t: 'prop', op: 'fade', id: pr.id });
       } else if (m.op === 'del') {
         const pr = props.get(String(m.id));
         if (!pr) return;
@@ -573,58 +602,6 @@ function handle(p, m) {
       const to = Array.isArray(m.to) ? m.to.map(Number) : [];
       if (to.length !== 3 || !to.every(Number.isFinite)) return;
       broadcast({ t: 'shoot', id: p.id, from: [+p.x.toFixed(1), 1.5, +p.z.toFixed(1)], to: to.map(n => +n.toFixed(1)) }, p.id);
-      break;
-    }
-    case 'build': { // rust-lite base building
-      if (m.op === 'place') {
-        const now = Date.now();
-        if (now - (p.lastBuild || 0) < 400) return;
-        p.lastBuild = now;
-        if (builds.size >= 300) { if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'sys', text: '🧱 Build limit reached (300).' })); return; }
-        if (!['wall', 'floor', 'door'].includes(m.kind)) return;
-        const pos = Array.isArray(m.p) ? m.p.map(Number) : [];
-        if (pos.length !== 3 || !pos.every(Number.isFinite) || !Number.isFinite(+m.ry)) return;
-        const b = {
-          id: 'b' + nextBuildId++, kind: m.kind, tier: 'wood',
-          p: [clampX(pos[0]), Math.max(0, Math.min(12, pos[1])), clampZ(pos[2])],
-          ry: +(+m.ry).toFixed(3), hp: m.kind === 'door' ? 150 : BUILD_HP.wood, owner: p.key,
-        };
-        builds.set(b.id, b);
-        worldDirty = true;
-        broadcast({ t: 'build', op: 'add', b });
-      } else if (m.op === 'hit') {
-        const b = builds.get(String(m.id));
-        if (!b) return;
-        if (b.owner && !store.isFriend(b.owner, p.key)) { // base protection
-          if (p.ws.readyState === 1 && Math.random() < .3) p.ws.send(JSON.stringify({ t: 'sys', text: '🔒 Protected base — only the owner and their friends can touch it.' }));
-          return;
-        }
-        const BDMG = { axe: 10, stoneaxe: 14, pickaxe: 12, stonepick: 16, pistol: 15, wrench: 8 };
-        const dmg = BDMG[String(m.item)] ?? 4;
-        if (Math.hypot(p.x - b.p[0], p.z - b.p[2]) > (m.item === 'pistol' ? 50 : 4.5)) return;
-        b.hp -= dmg;
-        worldDirty = true;
-        if (b.hp <= 0) {
-          builds.delete(b.id);
-          broadcast({ t: 'build', op: 'del', id: b.id });
-        } else broadcast({ t: 'build', op: 'hp', id: b.id, hp: b.hp });
-      } else if (m.op === 'fade') { // gmod fading door
-        const b = builds.get(String(m.id));
-        if (!b || b.kind !== 'door') return;
-        if (b.owner && !store.isFriend(b.owner, p.key)) {
-          if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'sys', text: '🔒 Locked — this door only opens for its owner and their friends.' }));
-          return;
-        }
-        broadcast({ t: 'build', op: 'fade', id: b.id });
-      } else if (m.op === 'upgrade') {
-        const b = builds.get(String(m.id));
-        if (!b || b.tier !== 'wood' || b.kind === 'door') return;
-        if (b.owner && !store.isFriend(b.owner, p.key)) return;
-        b.tier = 'stone';
-        b.hp = BUILD_HP.stone;
-        worldDirty = true;
-        broadcast({ t: 'build', op: 'upgrade', id: b.id, tier: 'stone', hp: b.hp });
-      }
       break;
     }
     case 'friend': { // build/prop protection whitelist

@@ -85,6 +85,45 @@ export const PHYS_KINDS = {
       return m;
     },
   },
+  wall: {
+    label: 'Wood wall', icon: '🧱', mass: 40,
+    shape: () => new CANNON.Box(new CANNON.Vec3(1.5, 1.5, .11)),
+    build() {
+      const tex = ct(128, 128, (g, w, h) => {
+        g.fillStyle = '#a8896a'; g.fillRect(0, 0, w, h);
+        g.strokeStyle = 'rgba(80,56,34,.55)'; g.lineWidth = 3;
+        for (let i = 1; i < 5; i++) { g.beginPath(); g.moveTo(i * 25.6, 0); g.lineTo(i * 25.6, h); g.stroke(); }
+        g.strokeStyle = 'rgba(60,42,22,.35)';
+        for (let i = 0; i < 14; i++) { const y = Math.random() * h; g.beginPath(); g.moveTo(Math.random() * w, y); g.lineTo(Math.random() * w, y + 8); g.stroke(); }
+      });
+      return new THREE.Mesh(new THREE.BoxGeometry(3, 3, .22), new THREE.MeshStandardMaterial({ map: tex, roughness: .85 }));
+    },
+  },
+  floor: {
+    label: 'Wood floor', icon: '🟫', mass: 40,
+    shape: () => new CANNON.Box(new CANNON.Vec3(1.5, .09, 1.5)),
+    build() {
+      const tex = ct(128, 128, (g, w, h) => {
+        g.fillStyle = '#9a7b58'; g.fillRect(0, 0, w, h);
+        g.strokeStyle = 'rgba(70,50,30,.5)'; g.lineWidth = 3;
+        for (let i = 1; i < 6; i++) { g.beginPath(); g.moveTo(0, i * 21.3); g.lineTo(w, i * 21.3); g.stroke(); }
+      });
+      return new THREE.Mesh(new THREE.BoxGeometry(3, .18, 3), new THREE.MeshStandardMaterial({ map: tex, roughness: .9 }));
+    },
+  },
+  door: {
+    label: 'Fading door', icon: '🚪', mass: 25,
+    shape: () => new CANNON.Box(new CANNON.Vec3(.8, 1.35, .08)),
+    build() {
+      const g = new THREE.Group();
+      const doorM = new THREE.MeshStandardMaterial({ color: 0x6b4a2e, roughness: .8, transparent: true }); // fades
+      g.add(new THREE.Mesh(new THREE.BoxGeometry(1.6, 2.7, .16), doorM));
+      const knob = new THREE.Mesh(new THREE.SphereGeometry(.06, 8, 6), new THREE.MeshStandardMaterial({ color: 0xc9a227, roughness: .3, metalness: .7 }));
+      knob.position.set(.6, 0, .12);
+      g.add(knob);
+      return g;
+    },
+  },
   cone: {
     label: 'Traffic cone', icon: '🚧', mass: 1.4,
     shape: () => new CANNON.Cylinder(.05, .2, .55, 8),
@@ -266,8 +305,13 @@ export function initPhysics(scene) {
     mesh.position.copy(body.position);
     enableShadows(mesh);
     scene.add(mesh);
-    const e = { id: prop.id, kind: prop.kind, body, mesh, owned: mine, grabbedBy: null };
+    const e = { id: prop.id, kind: prop.kind, owner: prop.owner || null, body, mesh, owned: mine, grabbedBy: null, frozen: false };
     props.set(prop.id, e);
+    if (prop.kind === 'door') {
+      e.inter = { id: `pdoor-${prop.id}`, type: 'fadedoor', x: prop.p[0], z: prop.p[2], r: 2.2, label: 'Door — E opens (owner & friends)', data: { prop: prop.id } };
+      W.interactables.push(e.inter);
+    }
+    if (prop.frozen) setFrozen(e, true);
     return e;
   }
   function remove(id) {
@@ -275,7 +319,33 @@ export function initPhysics(scene) {
     if (!e) return;
     world.removeBody(e.body);
     scene.remove(e.mesh);
+    if (e.walkCol) { const i = W.colliders.indexOf(e.walkCol); if (i !== -1) W.colliders.splice(i, 1); }
+    if (e.inter) { const i = W.interactables.indexOf(e.inter); if (i !== -1) W.interactables.splice(i, 1); }
     props.delete(id);
+  }
+
+  // darkrp freeze: a frozen prop is a STATIC body (solid to cars/props) with
+  // a walking collider (solid to feet). Unfreeze to physgun it around again.
+  function setFrozen(e, on) {
+    const b = e.body;
+    e.frozen = on;
+    if (on) {
+      b.type = CANNON.Body.STATIC;
+      b.velocity.setZero();
+      b.angularVelocity.setZero();
+      b.updateAABB();
+      if (!e.walkCol) { e.walkCol = { x0: 0, x1: 0, z0: 0, z1: 0, off: false }; W.colliders.push(e.walkCol); }
+      e.walkCol.x0 = b.aabb.lowerBound.x; e.walkCol.x1 = b.aabb.upperBound.x;
+      e.walkCol.z0 = b.aabb.lowerBound.z; e.walkCol.z1 = b.aabb.upperBound.z;
+      // don't block feet on things lying flat on the ground or floating overhead
+      e.walkCol.off = b.aabb.upperBound.y < .45 || b.aabb.lowerBound.y > 1.6;
+      if (e.inter) { e.inter.x = b.position.x; e.inter.z = b.position.z; }
+    } else {
+      b.type = CANNON.Body.DYNAMIC;
+      b.updateMassProperties();
+      if (e.walkCol) e.walkCol.off = true;
+      b.wakeUp();
+    }
   }
   function claim(e) {
     e.owned = true;
@@ -287,7 +357,7 @@ export function initPhysics(scene) {
   // remote authority: someone else is driving this prop now
   function applyState(m) {
     const e = props.get(m.id);
-    if (!e) return;
+    if (!e || e.frozen) return;
     e.owned = false;
     e.body.position.set(m.p[0], m.p[1], m.p[2]);
     e.body.quaternion.set(m.q[0], m.q[1], m.q[2], m.q[3]);
@@ -310,6 +380,7 @@ export function initPhysics(scene) {
   // shove props out of the way as you walk through them (and take ownership)
   function playerPush(px, py, pz, dt) {
     for (const e of props.values()) {
+      if (e.frozen) continue;
       const b = e.body;
       const dx = b.position.x - px, dz = b.position.z - pz;
       const d = Math.hypot(dx, dz);
@@ -327,6 +398,7 @@ export function initPhysics(scene) {
   function smack(px, py, pz, dirX, dirZ) {
     let hitAny = false;
     for (const e of props.values()) {
+      if (e.frozen) continue;
       const b = e.body;
       const dx = b.position.x - px, dz = b.position.z - pz;
       const d = Math.hypot(dx, dz);
@@ -413,7 +485,7 @@ export function initPhysics(scene) {
     if (sendT > .085) {
       sendT = 0;
       for (const e of props.values()) {
-        if (e.owned && e.body.sleepState !== CANNON.Body.SLEEPING) sendState(e);
+        if (e.owned && !e.frozen && e.body.sleepState !== CANNON.Body.SLEEPING) sendState(e);
       }
       for (const e of cars.values()) {
         if (e.owned && !e.car.driver && e.body.type === CANNON.Body.DYNAMIC && e.body.sleepState !== CANNON.Body.SLEEPING) sendCarState(e);
@@ -480,7 +552,7 @@ export function initPhysics(scene) {
 
   return {
     world, props, cars, add, remove, claim, applyState, applyCarState, sendState, sendCarState,
-    drive, step, smack, raycast, yawBody, grabLocal, anchorWorld, addStatic, removeStatic, PHYS_KINDS,
+    drive, step, smack, raycast, yawBody, grabLocal, anchorWorld, addStatic, removeStatic, setFrozen, PHYS_KINDS,
     setMyId(id) { myId = id; },
   };
 }

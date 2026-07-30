@@ -242,6 +242,7 @@ export function initInventory({ me, onEquip, onWear, onDropItem, toast }) {
   // (the localStorage user copy goes stale the moment anything is picked up)
   function restore(slots, hotbar) {
     if (!Array.isArray(slots) && !Array.isArray(hotbar)) return;
+    inv.sel = -1; // stale selection after death/reload made re-equips no-op
     if (Array.isArray(slots)) inv.slots = inv.slots.map((_, i) => {
       const s = slots[i];
       return s && ITEMS[s.id] ? { id: s.id, n: s.n || 1 } : null;

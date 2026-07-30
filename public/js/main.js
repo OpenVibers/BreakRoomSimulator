@@ -1199,11 +1199,15 @@ function start(token, user) {
     return { x: +(my.x + fx * 2.9).toFixed(2), z: +(my.z + fz * 2.9).toFixed(2), ry: +ry.toFixed(3) };
   }
   function placeBuild() {
+    // walls/floors/doors are PROPS now (darkrp): they spawn frozen at the
+    // ghost pose, and you physgun-grab to reposition, right-click to refreeze
     const kind = my.held;
     const g = ghostPose();
     const used = invApi.dropSelected(); // consumes one from the equipped stack
     if (used !== kind) return;
-    net.send({ t: 'build', op: 'place', kind, p: [g.x, kind === 'wall' ? 1.5 : kind === 'door' ? 1.35 : .08, g.z], ry: g.ry });
+    const y = kind === 'wall' ? 1.5 : kind === 'door' ? 1.35 : .1;
+    const h = g.ry / 2;
+    net.send({ t: 'prop', op: 'spawn', kind, p: [g.x, y, g.z], q: [0, +Math.sin(h).toFixed(3), 0, +Math.cos(h).toFixed(3)], frozen: true });
     beep(520, .07, 'sine', .1);
   }
 
@@ -1294,6 +1298,7 @@ function start(token, user) {
     if (!pgEquipped() || pgState.held) return;
     const hit = pgPick();
     if (!hit) return;
+    if (hit.e.frozen) phys.setFrozen(hit.e, false); // thaw to move (server re-freezes on veto)
     pgState.held = hit.e;
     pgState.lastYaw = my.yaw; // view-follow rotation baseline
     // gmod grip: remember WHERE on the object you grabbed it
@@ -1330,6 +1335,21 @@ function start(token, user) {
     if (e.button !== 0) return;
     pgState.lmb = false;
     if (pgState.held) physgunRelease();
+  });
+  addEventListener('contextmenu', (e) => {
+    if (!input.locked) return;
+    e.preventDefault();
+    if (pgEquipped() && pgState.held && !pgState.held.isCar) { // gmod: right-click freezes it right there
+      const held = pgState.held;
+      const b = held.body;
+      const fp = [+b.position.x.toFixed(2), +b.position.y.toFixed(2), +b.position.z.toFixed(2)];
+      const fq = [+b.quaternion.x.toFixed(3), +b.quaternion.y.toFixed(3), +b.quaternion.z.toFixed(3), +b.quaternion.w.toFixed(3)];
+      physgunRelease(false);
+      phys.setFrozen(held, true);
+      net.send({ t: 'prop', op: 'freeze', id: held.id, frozen: true, p: fp, q: fq });
+      toast('🧊 Frozen in place — physgun-grab it to move it again.');
+      beep(1150, .07, 'sine', .1);
+    }
   });
 
   // beams: one for me, plus one per prop another player is holding
@@ -1442,6 +1462,35 @@ function start(token, user) {
         e.grabbedBy = null;
         if (pgState.held === e) { physgunRelease(false); toast('🔒 Not yours — ask the owner to add you as a friend.'); }
       }
+    } else if (m.op === 'freeze') {
+      const e = phys.props.get(m.id);
+      if (!e) return;
+      if (m.frozen && Array.isArray(m.p)) {
+        e.body.position.set(m.p[0], m.p[1], m.p[2]);
+        e.body.quaternion.set(m.q[0], m.q[1], m.q[2], m.q[3]);
+        e.body.interpolatedPosition.copy(e.body.position);
+        e.body.interpolatedQuaternion.copy(e.body.quaternion);
+        e.mesh.position.copy(e.body.position);
+        e.mesh.quaternion.copy(e.body.quaternion);
+      }
+      phys.setFrozen(e, m.frozen === true);
+      if (m.frozen && pgState.held === e) physgunRelease(false);
+    } else if (m.op === 'fade') { // fading door: passable + see-through for 4s
+      const e = phys.props.get(m.id);
+      if (!e || e.fading) return;
+      e.fading = true;
+      e.mesh.traverse(o => { if (o.material?.transparent !== undefined && o.material.color) o.material.opacity = .22; });
+      e.body.collisionResponse = false;
+      if (e.walkCol) e.walkCol.off = true;
+      beep(980, .08, 'sine', .1);
+      setTimeout(() => {
+        if (!phys.props.has(m.id)) return;
+        e.fading = false;
+        e.mesh.traverse(o => { if (o.material?.color) o.material.opacity = 1; });
+        e.body.collisionResponse = true;
+        if (e.walkCol && e.frozen) e.walkCol.off = false;
+        beep(620, .08, 'sine', .09);
+      }, 4000);
     }
   });
 
@@ -1674,6 +1723,9 @@ function start(token, user) {
           return;
         case 'dropitem':
           net.send({ t: 'drop', op: 'take', id: nearest.data.drop });
+          return;
+        case 'fadedoor':
+          net.send({ t: 'prop', op: 'fade', id: nearest.data.prop });
           return;
         case 'build': {
           const be = buildMap.get(nearest.data.build);
@@ -2126,7 +2178,7 @@ function start(token, user) {
   window.__brs = {
     my, mg, scene, W, phys, input, renderer, daylight, teleport: (x, z, yaw) => { my.x = x; my.z = z; if (yaw !== undefined) my.yaw = yaw; sendPos(true); },
     action: doAction, nearest: () => nearest?.id || nearestSeat?.id || null,
-    spawnProp, physgunGrab, physgunRelease, pgState, sleepers: sleeperMap, inv: invApi,
+    spawnProp, physgunGrab, physgunRelease, pgState, pgPick, sleepers: sleeperMap, inv: invApi,
     drops: worldDrops, dropItem: dropItemInWorld, knockIt,
   };
 
