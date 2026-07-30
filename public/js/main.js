@@ -94,6 +94,28 @@ function start(token, user) {
     JSON.parse(localStorage.getItem('brs-cfg') || '{}').shadows !== false);
   let editor = null;
 
+  // ---- static-matrix freeze: the world is thousands of meshes that never
+  // move; recomposing their matrices every frame is pure CPU waste. Freeze
+  // everything except the known movers. ----
+  {
+    const dyn = new Set();
+    const markDyn = (o) => o && o.traverse(x => dyn.add(x));
+    W.cars?.forEach(c => markDyn(c.group));
+    W.gates?.forEach(g => { markDyn(g.pl); markDyn(g.pr); });
+    W.knockables?.forEach(k => markDyn(k.obj));
+    W.dynamic.fireGroups?.forEach(markDyn);
+    for (const id of ['a', 'b']) {
+      markDyn(W.anchors[`pong-${id}`]?.ball);
+      W.anchors[`c4-${id}`]?.discs?.forEach(markDyn);
+    }
+    markDyn(W.anchors.chess?.group);
+    scene.traverse(o => {
+      if (dyn.has(o) || o.isLight || o.isCamera) return;
+      o.matrixAutoUpdate = false;
+      o.updateMatrix();
+    });
+  }
+
   // ---------- drivable cars (rigid-body vehicles — they roll and flip) ----------
   const carState = { driving: null }; // driving = W.cars entry
   let carSendT = 0;
@@ -171,8 +193,9 @@ function start(token, user) {
   let fp = false; // first-person mode
   // ---------- persistent game settings ----------
   const cfg = Object.assign(
-    { wheel: 'zoom', sens: 1.0, fov: 70, invertY: false, shadows: true },
+    { wheel: 'zoom', sens: 1.0, fov: 70, invertY: false, shadows: true, shadowQ: null, rscale: 1, drawDist: 'far', xlights: true, fps: false },
     JSON.parse(localStorage.getItem('brs-cfg') || '{}'));
+  cfg.shadowQ ||= cfg.shadows === false ? 'off' : 'low'; // migrate the old checkbox
   const saveCfg = () => localStorage.setItem('brs-cfg', JSON.stringify(cfg));
   let myAvatar = makeAvatar(me.name, me.vest, me.guest, me.ap);
   enableShadows(myAvatar.group);
@@ -222,6 +245,13 @@ function start(token, user) {
   torch.position.set(.25, -.2, .1);
   torch.target.position.set(0, -.4, -12);
   camera.add(torch, torch.target);
+  // headlight pool (created up-front — stable light count, no shader hitches)
+  const hlPool = [];
+  for (let i = 0; i < 3; i++) {
+    const sp = new THREE.SpotLight(0xfff2cf, 0, 36, .52, .5, 1.1);
+    scene.add(sp, sp.target);
+    hlPool.push(sp);
+  }
   let vmSwing = 0;
   // per-item viewmodel pose so props read correctly in first person (Bug10)
   const VM_POSE = {
@@ -924,6 +954,9 @@ function start(token, user) {
     uiFocus('craft', craftOpen);
     if (craftOpen) renderCraft();
   }
+  // inventory ⇄ crafting cross links
+  $('btn-inv-craft').onclick = () => { invApi.toggle(false); toggleCraft(true); };
+  $('btn-craft-inv').onclick = () => { toggleCraft(false); invApi.toggle(true); };
 
   // ---------- base building: walls & floors with hp and upgrades ----------
   const buildMap = new Map(); // id -> {b, mesh, col, body, inter}
@@ -1282,14 +1315,53 @@ function start(token, user) {
     $('set-sens').value = cfg.sens;
     $('set-fov').value = cfg.fov;
     $('set-inverty').checked = cfg.invertY;
-    $('set-shadows').checked = cfg.shadows !== false;
+    for (const [id, v] of [['set-sh-off', 'off'], ['set-sh-low', 'low'], ['set-sh-high', 'high']])
+      $(id).classList.toggle('sel', cfg.shadowQ === v);
+    $('set-rscale').value = cfg.rscale;
+    $('set-dd-near').classList.toggle('sel', cfg.drawDist === 'near');
+    $('set-dd-far').classList.toggle('sel', cfg.drawDist !== 'near');
+    $('set-xlights').checked = cfg.xlights !== false;
+    $('set-fps').checked = !!cfg.fps;
   };
+  // ---- graphics application ----
+  const baseDpr = Math.min(devicePixelRatio, 2);
+  function applyGraphics() {
+    daylight.setShadowQuality(cfg.shadowQ);
+    renderer.setPixelRatio(baseDpr * cfg.rscale);
+    renderer.setSize(innerWidth, innerHeight);
+    const far = cfg.drawDist === 'near' ? 170 : 300;
+    camera.far = far;
+    camera.updateProjectionMatrix();
+    scene.fog.far = Math.min(260, far - 15);
+    scene.fog.near = cfg.drawDist === 'near' ? 60 : 90;
+    daylight.setExtraLights(cfg.xlights !== false);
+    $('fps-meter').classList.toggle('hidden', !cfg.fps);
+  }
+  for (const [id, v] of [['set-sh-off', 'off'], ['set-sh-low', 'low'], ['set-sh-high', 'high']])
+    $(id).onclick = () => { cfg.shadowQ = v; cfg.shadows = v !== 'off'; saveCfg(); applyGraphics(); refreshCfgUI(); };
+  $('set-rscale').oninput = (e) => { cfg.rscale = +e.target.value; saveCfg(); applyGraphics(); };
+  $('set-dd-near').onclick = () => { cfg.drawDist = 'near'; saveCfg(); applyGraphics(); refreshCfgUI(); };
+  $('set-dd-far').onclick = () => { cfg.drawDist = 'far'; saveCfg(); applyGraphics(); refreshCfgUI(); };
+  $('set-xlights').onchange = (e) => { cfg.xlights = e.target.checked; saveCfg(); applyGraphics(); };
+  $('set-fps').onchange = (e) => { cfg.fps = e.target.checked; saveCfg(); applyGraphics(); };
+  applyGraphics();
+  // fps counter (1s window)
+  let fpsN = 0, fpsT = performance.now();
+  function tickFps() {
+    if (!cfg.fps) return;
+    fpsN++;
+    const now2 = performance.now();
+    if (now2 - fpsT > 1000) {
+      $('fps-meter').textContent = `${Math.round(fpsN * 1000 / (now2 - fpsT))} fps · ${renderer.info.render.calls} draws`;
+      fpsN = 0;
+      fpsT = now2;
+    }
+  }
   $('set-wheel-zoom').onclick = () => { cfg.wheel = 'zoom'; saveCfg(); refreshCfgUI(); };
   $('set-wheel-hotbar').onclick = () => { cfg.wheel = 'hotbar'; saveCfg(); refreshCfgUI(); };
   $('set-sens').oninput = (e) => { cfg.sens = +e.target.value; saveCfg(); };
   $('set-fov').oninput = (e) => { cfg.fov = +e.target.value; camera.fov = cfg.fov; camera.updateProjectionMatrix(); saveCfg(); };
   $('set-inverty').onchange = (e) => { cfg.invertY = e.target.checked; saveCfg(); };
-  $('set-shadows').onchange = (e) => { cfg.shadows = e.target.checked; daylight.setShadows(cfg.shadows); saveCfg(); };
   camera.fov = cfg.fov; camera.updateProjectionMatrix();
   refreshCfgUI();
   $('btn-close-settings').onclick = () => { $('settings').classList.add('hidden'); uiFocus('settings', false); };
@@ -1763,21 +1835,22 @@ function start(token, user) {
       ghosts[bkind].rotation.y = gp.ry;
     }
 
-    // headlights on driven cars, brighter after dark
-    for (const e2 of phys.cars.values()) {
-      const car = e2.car;
-      if (car.driver != null) {
-        if (!e2.hlLight) {
-          const sp = new THREE.SpotLight(0xfff2cf, 0, 36, .52, .5, 1.1);
-          sp.position.set(0, .85, 2.0);
-          const tgt = new THREE.Object3D();
-          tgt.position.set(0, .25, 15);
-          car.group.add(sp, tgt);
-          sp.target = tgt;
-          e2.hlLight = sp;
+    // headlights: a fixed POOL of 3 spotlights shared by driven cars — the
+    // light count never changes, so shaders never recompile mid-game (the
+    // old per-car lazy lights caused a full recompile hitch on every enter)
+    {
+      let hi = 0;
+      for (const e2 of phys.cars.values()) {
+        if (e2.car.driver == null || hi >= hlPool.length) continue;
+        const hl2 = hlPool[hi++];
+        if (hl2.parent !== e2.car.group) {
+          e2.car.group.add(hl2, hl2.target);
+          hl2.position.set(0, .85, 2.0);
+          hl2.target.position.set(0, .25, 15);
         }
-        e2.hlLight.intensity = .25 + (1 - (W.dayFactor ?? 1)) * 3.4;
-      } else if (e2.hlLight) e2.hlLight.intensity = 0;
+        hl2.intensity = .25 + (1 - (W.dayFactor ?? 1)) * 3.4;
+      }
+      for (; hi < hlPool.length; hi++) hlPool[hi].intensity = 0;
     }
     // flashlight follows your view
     torch.intensity = my.held === 'flashlight' ? .5 + (1 - (W.dayFactor ?? 1)) * 3.6 : 0;
@@ -1793,6 +1866,7 @@ function start(token, user) {
     if (sendTimer > .1) { sendTimer = 0; sendPos(); }
 
     renderer.render(scene, camera);
+    tickFps();
   }
   frame();
 

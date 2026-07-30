@@ -2830,6 +2830,8 @@ function streets(scene) {
   const fireLight = new THREE.PointLight(0xff7722, 1.8, 11, 2);
   fireLight.position.set(0, 1.4, 0);
   fireG.add(fireLight);
+  (W.extraLights ||= []).push(fireLight);
+  (W.dynamic.fireGroups ||= []).push(fireG); // stays matrix-dynamic for the flame anim
   // rising smoke puffs
   const smokeTex = TX.ct(64, 64, (g, w, h) => {
     const gr = g.createRadialGradient(w / 2, h / 2, 4, w / 2, h / 2, 30);

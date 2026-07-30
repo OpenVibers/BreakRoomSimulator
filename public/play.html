@@ -67,9 +67,11 @@
   <div id="dmg-flash"></div>
   <div id="hitmark"></div>
   <div id="headshot-tag">HEADSHOT</div>
+  <div id="fps-meter" class="hidden"></div>
 
   <!-- crafting (C) -->
   <div id="craft-menu" class="hidden">
+    <button id="btn-craft-inv" class="xlink" style="float:right">🎒 Inventory →</button>
     <h3>🔨 Crafting</h3>
     <div class="have" id="craft-have"></div>
     <div id="craft-list"></div>
@@ -101,7 +103,7 @@
 <!-- ============ INVENTORY ============ -->
 <div id="inventory" class="hidden">
   <div id="inv-panel">
-    <div id="inv-head">🎒 INVENTORY <span>drag to move · 1-6 select · F use/swing · Tab close</span></div>
+    <div id="inv-head">🎒 INVENTORY <span>drag to move · 1-6 select · F use/swing · Tab close</span><button id="btn-inv-craft" class="xlink">🔨 Crafting →</button></div>
     <div id="inv-grid"></div>
     <div id="inv-hot-label">HOTBAR</div>
     <div id="inv-hotbar"></div>
@@ -134,7 +136,16 @@
     <div class="set-row"><span>Sensitivity</span><input id="set-sens" type="range" min="0.4" max="2.2" step="0.1"></div>
     <div class="set-row"><span>FOV</span><input id="set-fov" type="range" min="60" max="100" step="1"></div>
     <div class="set-row"><span>Invert Y</span><input id="set-inverty" type="checkbox"></div>
-    <div class="set-row"><span>Shadows</span><input id="set-shadows" type="checkbox"></div>
+    <p style="margin-top:6px">Graphics</p>
+    <div class="set-row"><span>Shadows</span>
+      <div class="seg"><button id="set-sh-off" class="segbtn">Off</button><button id="set-sh-low" class="segbtn">Low</button><button id="set-sh-high" class="segbtn">High</button></div>
+    </div>
+    <div class="set-row"><span>Render scale</span><input id="set-rscale" type="range" min="0.5" max="1" step="0.05"></div>
+    <div class="set-row"><span>Draw distance</span>
+      <div class="seg"><button id="set-dd-near" class="segbtn">Near</button><button id="set-dd-far" class="segbtn">Far</button></div>
+    </div>
+    <div class="set-row"><span>Extra lights</span><input id="set-xlights" type="checkbox"></div>
+    <div class="set-row"><span>FPS counter</span><input id="set-fps" type="checkbox"></div>
     <button id="btn-close-settings" class="btn-primary">Back to break</button>
     <button id="btn-logout" class="btn-ghost">Badge out (log out)</button>
   </div>

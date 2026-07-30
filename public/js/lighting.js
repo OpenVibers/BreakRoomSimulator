@@ -33,7 +33,10 @@ export function initLighting(scene, renderer, shadows = true) {
   const sun = new THREE.DirectionalLight(0xffeed8, 1.35);
   const moon = new THREE.DirectionalLight(0x8fa8d8, 0);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  // shadow pass = the whole scene rendered again; refresh it every OTHER
+  // frame — the sun moves slowly enough that nobody can tell
+  renderer.shadowMap.autoUpdate = false;
+  sun.shadow.mapSize.set(1024, 1024);
   sun.shadow.camera.left = -48; sun.shadow.camera.right = 48;
   sun.shadow.camera.top = 48; sun.shadow.camera.bottom = -48;
   sun.shadow.camera.near = 1; sun.shadow.camera.far = 240;
@@ -43,6 +46,7 @@ export function initLighting(scene, renderer, shadows = true) {
   // interior fluorescents — the lights stay on all night (Bug44: the facility
   // went pitch black after dark). World coords: cafeteria, security, lockers,
   // service hallway.
+  const interiorLights = [];
   for (const [x, y, z, i2, dist] of [
     [67, 4.6, 55, .75, 30], [67, 4.6, 83, .75, 30], [83, 4.6, 55, .75, 30], [83, 4.6, 83, .75, 30],
     [77, 4.4, -5, .65, 26], [75, 4.2, 24, .65, 26],
@@ -51,6 +55,7 @@ export function initLighting(scene, renderer, shadows = true) {
     const pl = new THREE.PointLight(0xf6f4ea, i2, dist, 1.2);
     pl.position.set(x, y, z);
     scene.add(pl);
+    interiorLights.push(pl);
   }
   enableShadows(scene); // everything built so far
 
@@ -92,7 +97,10 @@ export function initLighting(scene, renderer, shadows = true) {
   ];
   let indoorK = 0;
 
+  let frameN = 0;
   function update(dt, px, pz) {
+    frameN++;
+    if (renderer.shadowMap.enabled && frameN % 2 === 0) renderer.shadowMap.needsUpdate = true;
     const inside = INDOORS.some(([x0, x1, z0, z1]) => px >= x0 && px <= x1 && pz >= z0 && pz <= z1) ? 1 : 0;
     indoorK += (inside - indoorK) * Math.min(1, (dt || .016) * 4);
     const t = timeOfDay();
@@ -133,12 +141,27 @@ export function initLighting(scene, renderer, shadows = true) {
     return t;
   }
 
-  function setShadows(on) {
-    renderer.shadowMap.enabled = on;
+  function refreshMaterials() {
     scene.traverse(o => {
       if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { m.needsUpdate = true; });
     });
   }
+  function setShadowQuality(q) { // 'off' | 'low' | 'high'
+    renderer.shadowMap.enabled = q !== 'off';
+    const size = q === 'high' ? 2048 : 1024;
+    if (sun.shadow.mapSize.x !== size) {
+      sun.shadow.mapSize.set(size, size);
+      if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+    }
+    renderer.shadowMap.needsUpdate = true;
+    refreshMaterials();
+  }
+  function setExtraLights(on) { // interior fluorescents + street lamps + fire
+    for (const pl of interiorLights) pl.visible = on;
+    for (const nl of W.nightLights || []) nl.light.visible = on;
+    for (const fl of W.extraLights || []) fl.visible = on;
+    refreshMaterials();
+  }
 
-  return { update, setShadows, timeOfDay };
+  return { update, setShadowQuality, setExtraLights, timeOfDay };
 }

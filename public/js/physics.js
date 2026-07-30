@@ -357,7 +357,7 @@ export function initPhysics(scene) {
       }
     }
     if (playerPos) playerPush(playerPos.x, playerPos.y, playerPos.z, dt);
-    world.step(1 / 60, dt, 3);
+    world.step(1 / 60, dt, 2);
     // cars: visual group, walking collider, and E-prompt follow the body
     for (const e of cars.values()) {
       const b = e.body, car = e.car;
