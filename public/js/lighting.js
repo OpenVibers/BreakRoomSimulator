@@ -119,10 +119,13 @@ export function initLighting(scene, renderer, shadows = true) {
     scene.background.copy(sky);
     scene.fog.color.copy(sky);
 
-    sun.intensity = 1.4 * d;
+    // no direct sun indoors: interiors are lit by the fluorescents, and sun
+    // spilling "through the roof" painted giant moving shadow-boundary wedges
+    sun.intensity = 1.4 * d * (1 - indoorK * .92);
     sun.color.copy(sunWarm).lerp(sunNoon, smooth(.05, .45, elev));
-    sun.position.set(px + Math.sin(az) * 80, Math.max(4, elev * 90), pz + Math.cos(az) * 40);
-    sun.target.position.set(px, 0, pz);
+    const qx = Math.round(px / 4) * 4, qz = Math.round(pz / 4) * 4; // quantized follow = less boundary swim
+    sun.position.set(qx + Math.sin(az) * 80, Math.max(4, elev * 90), qz + Math.cos(az) * 40);
+    sun.target.position.set(qx, 0, qz);
 
     moon.intensity = .22 * (1 - d);
     moon.position.set(px - Math.sin(az) * 70, Math.max(10, -elev * 80), pz - Math.cos(az) * 35);

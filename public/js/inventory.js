@@ -64,6 +64,10 @@ export function initInventory({ me, onEquip, onWear, onDropItem, toast }) {
     clearTimeout(saveT);
     saveT = setTimeout(() => net.send({ t: 'inv', inv: inv.slots, hotbar: inv.hotbar }), 400);
   };
+  const flush = () => { // fire the pending save NOW (tab closing)
+    clearTimeout(saveT);
+    net.send({ t: 'inv', inv: inv.slots, hotbar: inv.hotbar });
+  };
 
   // ---------- DOM ----------
   const hotbarEl = document.getElementById('hotbar');
@@ -288,5 +292,5 @@ export function initInventory({ me, onEquip, onWear, onDropItem, toast }) {
     if (el?.dataset?.bar !== undefined) select(+el.dataset.bar);
   });
 
-  return { add, select, useSelected, dropSelected, count, consume, toggle, selectedItem, restore, state: inv };
+  return { add, select, useSelected, dropSelected, count, consume, toggle, selectedItem, restore, flush, state: inv };
 }

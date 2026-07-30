@@ -218,7 +218,12 @@ setInterval(() => { // 5Hz herd-and-horde tick
       for (const p of players.values()) { const dd = Math.hypot(p.x - n.x, p.z - n.z); if (dd < bd) { bd = dd; best = p; } }
       if (best) {
         n.ry = Math.atan2(best.x - n.x, best.z - n.z);
-        if (bd > 1.4) { n.x += Math.sin(n.ry) * sp * step; n.z += Math.cos(n.ry) * sp * step; }
+        if (bd > 1.4) {
+          const nx2 = n.x + Math.sin(n.ry) * sp * step, nz2 = n.z + Math.cos(n.ry) * sp * step;
+          // the facility is lit — zombies won't set foot inside
+          const INDOORS = [[58, 92, 31, 107], [62, 92, -17, 17], [58, 92, 17, 31], [52.5, 58, 39, 99], [48, 53, 63, 82]];
+          if (!INDOORS.some(([x0, x1, z0, z1]) => nx2 >= x0 && nx2 <= x1 && nz2 >= z0 && nz2 <= z1)) { n.x = nx2; n.z = nz2; }
+        }
         else if (Date.now() - n.atkT > 1200) {
           n.atkT = Date.now();
           best.hp = (best.hp ?? 100) - 8;
@@ -672,7 +677,11 @@ function handle(p, m) {
         if (!s) return;
         if (Math.hypot(p.x - s.x, p.z - s.z) > maxRange) return;
         s.hp = (s.hp ?? 40) - dmg; // sleepers are fragile
-        if (s.hp > 0) { worldDirty = true; return; }
+        if (s.hp > 0) {
+          worldDirty = true;
+          broadcast({ t: 'sleephurt', key, by: p.id }); // red flash + hitmarker
+          return;
+        }
         sleepers.delete(key);
         spillInventory(key, s.x, s.z);
         stats.kills++;

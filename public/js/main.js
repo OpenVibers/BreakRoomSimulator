@@ -757,7 +757,7 @@ function start(token, user) {
     root.add(zz);
     enableShadows(root);
     scene.add(root);
-    sleeperMap.set(s.key, { root, zz, t: Math.random() * 6 });
+    sleeperMap.set(s.key, { root, zz, av, t: Math.random() * 6 });
   }
   function removeSleeper(key) {
     const e = sleeperMap.get(key);
@@ -767,6 +767,10 @@ function start(token, user) {
   }
   net.on('sleep', (m) => addSleeper(m.s));
   net.on('wake', (m) => removeSleeper(m.key));
+  net.on('sleephurt', (m) => {
+    sleeperMap.get(m.key)?.av?.flash?.();
+    if (m.by === myId) hitmarker(false);
+  });
 
   // ---------- dropped items on the floor (minecraft style) ----------
   const worldDrops = new Map(); // id -> {group, mesh, inter, t}
@@ -900,7 +904,29 @@ function start(token, user) {
       const skin = M2(0x6a9c4e, .9), shirt = M2(0x3a3f46, .95);
       g.add(bx(.44, .62, .26, shirt, 0, 1.12, 0));
       head = bx(.3, .3, .3, skin, 0, 1.62, 0);
+      // ember eyes so they read at night
+      const eyeM = new THREE.MeshStandardMaterial({ color: 0xff7a2a, emissive: 0xff7a2a, emissiveIntensity: 2 });
+      head.add(bx(.05, .04, .02, eyeM, -.07, .03, .16));
+      head.add(bx(.05, .04, .02, eyeM, .07, .03, .16));
       g.add(head);
+      // a lit torch in hand — see them coming
+      const torchG = new THREE.Group();
+      torchG.add(bx(.05, .4, .05, M2(0x5a4028, .9), 0, 0, 0));
+      const flameM = new THREE.MeshStandardMaterial({ color: 0xffb42e, emissive: 0xff8a1c, emissiveIntensity: 2.6 });
+      torchG.add(bx(.1, .16, .1, flameM, 0, .27, 0));
+      const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: ct(64, 64, (gg, w2, h2) => {
+          const gr = gg.createRadialGradient(w2 / 2, h2 / 2, 3, w2 / 2, h2 / 2, 30);
+          gr.addColorStop(0, 'rgba(255,190,90,.9)'); gr.addColorStop(1, 'rgba(255,140,30,0)');
+          gg.fillStyle = gr; gg.fillRect(0, 0, w2, h2);
+        }),
+        transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      glow.scale.set(1.1, 1.1, 1);
+      glow.position.y = .3;
+      torchG.add(glow);
+      torchG.position.set(.42, 1.25, .3);
+      g.add(torchG);
       for (const ax of [-.3, .3]) { // arms out front, classic
         const arm = bx(.11, .11, .55, skin, ax, 1.3, .34);
         arms.push(arm); g.add(arm);
@@ -929,7 +955,29 @@ function start(token, user) {
     if (!n) return;
     scene.remove(n.group);
     npcMap.delete(id);
-    if (burn) beep(190, .3, 'sawtooth', .08);
+    if (burn) { // minecraft sunrise: they go up in flames
+      beep(190, .3, 'sawtooth', .08);
+      const fl = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: ct(64, 96, (gg, w2, h2) => {
+          const gr = gg.createLinearGradient(0, h2, 0, 0);
+          gr.addColorStop(0, 'rgba(255,120,20,.95)'); gr.addColorStop(.7, 'rgba(255,200,60,.5)'); gr.addColorStop(1, 'rgba(255,240,160,0)');
+          gg.fillStyle = gr; gg.fillRect(0, 0, w2, h2);
+        }),
+        transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+      }));
+      fl.position.set(n.group.position.x, 1.1, n.group.position.z);
+      fl.scale.set(1.2, 2, 1);
+      scene.add(fl);
+      let life = 1;
+      const fade = () => {
+        life -= .06;
+        fl.material.opacity = Math.max(0, life);
+        fl.position.y += .05;
+        if (life > 0) requestAnimationFrame(fade);
+        else scene.remove(fl);
+      };
+      fade();
+    }
   }
   net.on('npcs', (m) => {
     const seen = new Set();
@@ -1224,6 +1272,11 @@ function start(token, user) {
   });
 
   // ---------- physgun: hold LMB to grab · wheel push/pull · R spin · X delete ----------
+  const muzzleV = new THREE.Vector3();
+  function myBeamFrom() { // the beam starts at the GUN, gmod-style
+    if (fp) return camera.localToWorld(muzzleV.set(.31, -.26, -.75)); // viewmodel gun tip
+    return myAvatar.heldAnchor.getWorldPosition(muzzleV);
+  }
   const pgState = { held: null, dist: 0, lmb: false, missT: 0 };
   const pgRay = new THREE.Raycaster();
   function pgEquipped() { return my.held === 'physgun'; }
@@ -1392,6 +1445,7 @@ function start(token, user) {
     }
   });
 
+  addEventListener('pagehide', () => { try { invApi.flush(); } catch {} });
   connect(token, {
     onOpen: () => {},
     onClose: (e) => {
