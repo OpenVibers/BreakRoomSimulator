@@ -64,9 +64,10 @@ function start(token, user) {
   const me = { name: user.name, vest: user.vest, guest: user.guest, admin: !!user.admin, ap: user.ap || null, inv: user.inv, hotbar: user.hotbar, stats: user.stats || {} };
 
   // ---------- three ----------
+  const cfg0 = JSON.parse(localStorage.getItem('brs-cfg') || '{}'); // pre-renderer options
   const canvas = $('game');
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: cfg0.aa !== false, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5)); // >1.5 dpr is wasted fragments on this art style
   renderer.setSize(innerWidth, innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   const scene = new THREE.Scene();
@@ -193,7 +194,7 @@ function start(token, user) {
   let fp = false; // first-person mode
   // ---------- persistent game settings ----------
   const cfg = Object.assign(
-    { wheel: 'zoom', sens: 1.0, fov: 70, invertY: false, shadows: true, shadowQ: null, rscale: 1, drawDist: 'far', xlights: true, fps: false },
+    { wheel: 'zoom', sens: 1.0, fov: 70, invertY: false, shadows: true, shadowQ: null, rscale: 1, drawDist: 'far', xlights: true, fps: false, aa: true },
     JSON.parse(localStorage.getItem('brs-cfg') || '{}'));
   cfg.shadowQ ||= cfg.shadows === false ? 'off' : 'low'; // migrate the old checkbox
   const saveCfg = () => localStorage.setItem('brs-cfg', JSON.stringify(cfg));
@@ -247,7 +248,7 @@ function start(token, user) {
   camera.add(torch, torch.target);
   // headlight pool (created up-front — stable light count, no shader hitches)
   const hlPool = [];
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 2; i++) {
     const sp = new THREE.SpotLight(0xfff2cf, 0, 36, .52, .5, 1.1);
     scene.add(sp, sp.target);
     hlPool.push(sp);
@@ -1299,7 +1300,7 @@ function start(token, user) {
       });
     }
   }
-  $('btn-settings').onclick = () => {
+  const openSettings = () => {
     $('settings').classList.remove('hidden');
     uiFocus('settings', true);
     buildApRows();
@@ -1309,6 +1310,8 @@ function start(token, user) {
       ? 'Guest session — create an account to save stats.'
       : `🏓 Pong wins: <b>${s.pongWins || 0}</b> · 🔴 Connect 4 wins: <b>${s.c4Wins || 0}</b> · ♟️ Chess wins: <b>${s.chessWins || 0}</b>`;
   };
+  $('btn-settings').onclick = openSettings;
+  $('btn-settings2').onclick = openSettings; // the ⚙️ — same panel, graphics on top
   const refreshCfgUI = () => {
     $('set-wheel-zoom').classList.toggle('sel', cfg.wheel === 'zoom');
     $('set-wheel-hotbar').classList.toggle('sel', cfg.wheel === 'hotbar');
@@ -1321,10 +1324,11 @@ function start(token, user) {
     $('set-dd-near').classList.toggle('sel', cfg.drawDist === 'near');
     $('set-dd-far').classList.toggle('sel', cfg.drawDist !== 'near');
     $('set-xlights').checked = cfg.xlights !== false;
+    $('set-aa').checked = cfg.aa !== false;
     $('set-fps').checked = !!cfg.fps;
   };
   // ---- graphics application ----
-  const baseDpr = Math.min(devicePixelRatio, 2);
+  const baseDpr = Math.min(devicePixelRatio, 1.5);
   function applyGraphics() {
     daylight.setShadowQuality(cfg.shadowQ);
     renderer.setPixelRatio(baseDpr * cfg.rscale);
@@ -1343,6 +1347,12 @@ function start(token, user) {
   $('set-dd-near').onclick = () => { cfg.drawDist = 'near'; saveCfg(); applyGraphics(); refreshCfgUI(); };
   $('set-dd-far').onclick = () => { cfg.drawDist = 'far'; saveCfg(); applyGraphics(); refreshCfgUI(); };
   $('set-xlights').onchange = (e) => { cfg.xlights = e.target.checked; saveCfg(); applyGraphics(); };
+  $('set-aa').onchange = (e) => { // MSAA can only change at context creation
+    cfg.aa = e.target.checked;
+    saveCfg();
+    toast('🎨 Antialiasing applies after a quick reload…', 1800);
+    setTimeout(() => location.reload(), 900);
+  };
   $('set-fps').onchange = (e) => { cfg.fps = e.target.checked; saveCfg(); applyGraphics(); };
   applyGraphics();
   // fps counter (1s window)
@@ -1527,7 +1537,7 @@ function start(token, user) {
 
   // ---------- movement & camera ----------
   const clock = new THREE.Clock();
-  let sendTimer = 0, lastSent = '';
+  let sendTimer = 0, lastSent = '', frameCount = 0;
   function sendPos(force = false) {
     const d = [+my.x.toFixed(2), +my.y.toFixed(2), +my.z.toFixed(2), +my.ry.toFixed(2), my.anim];
     const s = d.join(',');
@@ -1683,7 +1693,7 @@ function start(token, user) {
     myAvatar.airborne = !my.onGround && !my.seat;
     myAvatar.animate(dt);
 
-    // others interpolate
+    // others interpolate (full limb animation only within 55m — LOD)
     for (const o of others.values()) {
       const g = o.avatar.group, t = o.target;
       g.position.x += (t.x - g.position.x) * Math.min(1, dt * 10);
@@ -1693,7 +1703,8 @@ function start(token, user) {
       while (dr > Math.PI) dr -= Math.PI * 2;
       while (dr < -Math.PI) dr += Math.PI * 2;
       g.rotation.y += dr * Math.min(1, dt * 10);
-      o.avatar.animate(dt);
+      const ddx = g.position.x - my.x, ddz = g.position.z - my.z;
+      if (ddx * ddx + ddz * ddz < 3025) o.avatar.animate(dt);
     }
 
     if (carState.driving && !fp) my.dist = Math.max(my.dist, 6.5);
@@ -1858,7 +1869,9 @@ function start(token, user) {
     daylight.update(dt, my.x, my.z);
     W.dynamic.fires?.forEach(f => f.update(dt));
 
-    scanInteractables();
+    // interactable scan every 3rd frame — a prompt appearing 30ms late is
+    // invisible; scanning a few hundred entries per frame is not
+    if ((frameCount = (frameCount + 1) % 3) === 0) scanInteractables();
     mg.update(dt);
 
     // network send 10Hz

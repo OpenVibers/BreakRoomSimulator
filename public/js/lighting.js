@@ -46,11 +46,13 @@ export function initLighting(scene, renderer, shadows = true) {
   // interior fluorescents — the lights stay on all night (Bug44: the facility
   // went pitch black after dark). World coords: cafeteria, security, lockers,
   // service hallway.
+  // every light here is evaluated per-fragment on every draw (forward
+  // renderer) — fewer, wider lights beat many narrow ones
   const interiorLights = [];
   for (const [x, y, z, i2, dist] of [
-    [67, 4.6, 55, .75, 30], [67, 4.6, 83, .75, 30], [83, 4.6, 55, .75, 30], [83, 4.6, 83, .75, 30],
-    [77, 4.4, -5, .65, 26], [75, 4.2, 24, .65, 26],
-    [55.2, 2.8, 55, .55, 22], [55.2, 2.8, 83, .55, 22],
+    [70, 4.6, 60, .85, 42], [80, 4.6, 82, .85, 42],
+    [77, 4.4, -5, .7, 30], [75, 4.2, 24, .65, 26],
+    [55.2, 2.8, 69, .6, 40],
   ]) {
     const pl = new THREE.PointLight(0xf6f4ea, i2, dist, 1.2);
     pl.position.set(x, y, z);
@@ -100,7 +102,7 @@ export function initLighting(scene, renderer, shadows = true) {
   let frameN = 0;
   function update(dt, px, pz) {
     frameN++;
-    if (renderer.shadowMap.enabled && frameN % 2 === 0) renderer.shadowMap.needsUpdate = true;
+    if (renderer.shadowMap.enabled && frameN % 3 === 0) renderer.shadowMap.needsUpdate = true;
     const inside = INDOORS.some(([x0, x1, z0, z1]) => px >= x0 && px <= x1 && pz >= z0 && pz <= z1) ? 1 : 0;
     indoorK += (inside - indoorK) * Math.min(1, (dt || .016) * 4);
     const t = timeOfDay();

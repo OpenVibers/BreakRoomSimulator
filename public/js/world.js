@@ -2695,11 +2695,14 @@ function streets(scene) {
     lamp.add(cyl(.07, .09, 6.4, M.blackMetal, 0, 3.2, 0, 8));
     lamp.add(box(1.6, .08, .12, M.blackMetal, .8, 6.35, 0));
     lamp.add(box(.5, .1, .22, lampM, 1.5, 6.28, 0));
-    // real pool of light on the road after dark
-    const glow = new THREE.PointLight(0xffe9b0, 0, 16, 1.4);
-    glow.position.set(1.5, 6.1, 0);
-    lamp.add(glow);
-    W.nightLights.push({ light: glow, night: 1.5 });
+    // real light pools on ALTERNATING lamps only — every light costs every
+    // fragment of every draw; the in-between lamps get emissive heads only
+    if (lz === -30 || lz === 50 || lz === 126) {
+      const glow = new THREE.PointLight(0xffe9b0, 0, 20, 1.3);
+      glow.position.set(1.5, 6.1, 0);
+      lamp.add(glow);
+      W.nightLights.push({ light: glow, night: 1.7 });
+    }
     lamp.position.set(132.2, 0, lz);
     scene.add(lamp);
     const c = collide(132.2, lz, .3, .3);
