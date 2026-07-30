@@ -179,10 +179,17 @@ export function initPhysics(scene) {
   const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.81, 0) });
   world.broadphase = new CANNON.SAPBroadphase(world);
   world.allowSleep = true;
+  // crisper contacts: more solver iterations + tighter tolerance = stable
+  // stacks and less spongy pushing (the "havok" feel is mostly solver quality)
+  world.solver.iterations = 14;
+  world.solver.tolerance = .01;
   const groundMat = new CANNON.Material('ground');
   const propMat = new CANNON.Material('prop');
   const bouncyMat = new CANNON.Material('bouncy');
-  world.addContactMaterial(new CANNON.ContactMaterial(groundMat, propMat, { friction: .45, restitution: .25 }));
+  // ground-prop friction is EXACTLY 0, like the cars: cannon's friction solver
+  // freezes heavy resting bodies and lets light ones ice-skate — believable
+  // sliding friction is applied manually in step() instead
+  world.addContactMaterial(new CANNON.ContactMaterial(groundMat, propMat, { friction: 0, restitution: .25 }));
   world.addContactMaterial(new CANNON.ContactMaterial(propMat, propMat, { friction: .4, restitution: .3 }));
   world.addContactMaterial(new CANNON.ContactMaterial(groundMat, bouncyMat, { friction: .3, restitution: .72 }));
   world.addContactMaterial(new CANNON.ContactMaterial(propMat, bouncyMat, { friction: .3, restitution: .6 }));
@@ -259,22 +266,31 @@ export function initPhysics(scene) {
     wRay.intersectBody(body, wRes);
     return wRes.hasHit ? wRes.hitPointWorld.y : null; // null: (x,z) misses the actual shape
   }
-  const STEP = .68; // max walk-up height — one box, not one crate
-  // highest walkable surface under (x,z) reachable from foot height py
+  const STEP = .5; // max walk-up height (~source 18u): stairs/ramps yes, boxes no — jump those
+  // highest walkable surface under (x,z) reachable from foot height py.
+  // Returns {y, e}: e is the entity you'd be standing on (null = world floor),
+  // so the walker can ride moving props like source-engine platforms.
   function groundAt(x, z, py) {
-    let g = 0;
-    const consider = (body) => {
+    let g = 0, ge = null;
+    const consider = (body, e) => {
       body.updateAABB();
       const bb = body.aabb;
       if (x < bb.lowerBound.x - .05 || x > bb.upperBound.x + .05 ||
           z < bb.lowerBound.z - .05 || z > bb.upperBound.z + .05) return;
       if (bb.lowerBound.y > py + STEP + 1.2) return; // floating way overhead
       const h = surfaceYAt(body, x, z);
-      if (h != null && h <= py + STEP && h > g) g = h;
+      if (h != null && h <= py + STEP && h > g) { g = h; ge = e; }
     };
-    for (const e of props.values()) consider(e.body);
-    for (const e of cars.values()) consider(e.body);
-    return g;
+    for (const e of props.values()) consider(e.body, e);
+    for (const e of cars.values()) consider(e.body, e);
+    return { y: g, e: ge };
+  }
+  // landing on a physics prop presses it down — the source-engine thud
+  function stomp(e, vy) {
+    if (!e || e.frozen || e.isCar) return;
+    if (e.grabbedBy && e.grabbedBy !== myId) return;
+    claim(e);
+    e.body.applyImpulse(V(0, Math.max(-40, vy * Math.min(e.body.mass, 6) * .55), 0));
   }
   // players are solid: shove the walking capsule out of dynamic props so a
   // physgunned crate PUSHES people instead of clipping through them
@@ -481,21 +497,37 @@ export function initPhysics(scene) {
     });
   }
 
-  // shove props out of the way as you walk through them (and take ownership)
-  function playerPush(px, py, pz, dt) {
+  // shove props out of the way as you walk into them (and take ownership).
+  // Source-style rules: only while GROUNDED and actually moving, never a prop
+  // you're landing on or standing on, force scales inversely with mass — a
+  // box skids away, a heavy crate mostly stands its ground.
+  function playerPush(p, dt) {
+    if (!p.onGround) return; // no mid-air kicking: jumps land ON props now
+    const wv = p.wishVel || p.vel || { x: 0, z: 0 };
+    const spd = Math.hypot(wv.x || 0, wv.z || 0);
+    if (spd < .4) return; // standing still shouldn't vibrate the furniture
+    const px = p.x, py = p.y, pz = p.z;
     for (const e of props.values()) {
       if (e.frozen) continue;
       if (e.grabbedBy && e.grabbedBy !== myId) continue; // don't fight the holder's stream
       const b = e.body;
-      if (py > b.aabb.upperBound.y - .25) continue; // standing on it, not into it
+      if (py > b.aabb.upperBound.y - .45) continue; // landing zone / standing on it
       const dx = b.position.x - px, dz = b.position.z - pz;
       const d = Math.hypot(dx, dz);
       const rad = .34 + (e.kind === 'crate' ? .62 : .42);
       if (d < rad && b.position.y < py + 1.6) {
-        const nx = d > .01 ? dx / d : 1, nz = d > .01 ? dz / d : 0;
+        const dot = (dx * wv.x + dz * wv.z) / ((d || .01) * spd);
+        if (dot < .25) continue; // only props you're walking INTO
         claim(e);
-        // impulse at the center of mass (a relative point would add torque)
-        b.applyImpulse(new CANNON.Vec3(nx * 3.2 * dt * 60 * .12, .3, nz * 3.2 * dt * 60 * .12));
+        // velocity-space push (same trick as the cars): cannon's friction
+        // solver eats forces AND small impulses on ground-resting bodies, so
+        // we steer the velocity directly — boxes skid ahead of you, heavy
+        // crates creep, and the solver still owns collisions and toppling
+        const tv = Math.min(spd, 4.8) * Math.min(1, 4 / b.mass) * .75;
+        const k = Math.min(1, dt * 14);
+        b.velocity.x += ((wv.x / spd) * tv - b.velocity.x) * k;
+        b.velocity.z += ((wv.z / spd) * tv - b.velocity.z) * k;
+        e.pushT = performance.now(); // ground drag stands down while actively pushed
       }
     }
   }
@@ -542,8 +574,8 @@ export function initPhysics(scene) {
         e.body.wakeUp();
       }
     }
-    if (playerPos) playerPush(playerPos.x, playerPos.y, playerPos.z, dt);
-    world.step(1 / 60, dt, 2);
+    if (playerPos) playerPush(playerPos, dt);
+    world.step(1 / 60, dt, 3);
     // cars: visual group, walking collider, and E-prompt follow the body
     for (const e of cars.values()) {
       const b = e.body, car = e.car;
@@ -580,6 +612,23 @@ export function initPhysics(scene) {
         b.position.y = 2;
         b.velocity.set(0, 0, 0);
         b.angularVelocity.set(0, 0, 0);
+      }
+      // depenetration insurance: with zero ground friction, a prop expelled
+      // from inside geometry can be launched — clamp runaway horizontal speed
+      {
+        const hv = Math.hypot(b.velocity.x, b.velocity.z);
+        if (hv > 24) { b.velocity.x *= 24 / hv; b.velocity.z *= 24 / hv; }
+      }
+      // manual sliding friction: cannon's friction is weak on light bodies
+      // (they ice-skate) and sticky on heavy ones — apply believable ground
+      // drag ourselves. Balls keep rolling; held props are the holder's problem.
+      if (!e.frozen && !e.grabbedBy && b.sleepState !== CANNON.Body.SLEEPING &&
+          Math.abs(b.velocity.y) < .7 && b.position.y < 1.4 &&
+          (!e.pushT || performance.now() - e.pushT > 130)) {
+        const drag = (e.kind === 'ball' || e.kind === 'melon') ? .55 : .06;
+        const f = Math.pow(drag, dt);
+        b.velocity.x *= f;
+        b.velocity.z *= f;
       }
       // interpolated pose: fixed-step positions quantize to 60Hz and read as
       // chop against an unaligned rAF — cannon keeps smooth in-between values
@@ -684,7 +733,7 @@ export function initPhysics(scene) {
   return {
     world, props, cars, add, remove, claim, applyState, applyCarState, sendState, sendCarState,
     drive, step, smack, raycast, yawBody, rotateBody, setQuatAnchored, grabLocal, anchorWorld,
-    addStatic, removeStatic, setFrozen, addCar, groundAt, resolvePlayer, PHYS_KINDS,
+    addStatic, removeStatic, setFrozen, addCar, groundAt, resolvePlayer, stomp, PHYS_KINDS,
     setMyId(id) { myId = id; },
   };
 }

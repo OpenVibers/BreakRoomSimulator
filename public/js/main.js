@@ -2045,7 +2045,7 @@ function start(token, user) {
       input.jumpQueued = false;
       if (carState.driving || carState.riding) { /* Space is the handbrake while driving */ }
       else if (mg.myPongTable && !my.seat) mg.swing();
-      else if (my.onGround && !my.seat) { my.vy = my.crouch ? 4.2 : 5.4; my.onGround = false; my.crouch = false; beep(520, .04, 'sine', .05); }
+      else if (my.onGround && !my.seat) { my.vy = my.crouch ? 4.6 : 6.1; my.onGround = false; my.crouch = false; beep(520, .04, 'sine', .05); } // source-height: a crate is jumpable
       else if (my.seat) standUp();
     }
 
@@ -2103,6 +2103,10 @@ function start(token, user) {
         my.vel.x += wx * add; my.vel.z += wz * add;
       }
       let nx = my.x + my.vel.x * dt, nz = my.z + my.vel.z * dt;
+      // pre-clip velocity: the shove force on props must survive wall-clipping
+      // (walking into a blocking crate zeroes my.vel, but you're still pushing)
+      my.wishVel = my.wishVel || { x: 0, z: 0 };
+      my.wishVel.x = my.vel.x; my.wishVel.z = my.vel.z;
       W.feetY = my.y; // surface-probing colliders judge "climbable" from foot height
       [nx, nz] = resolveCollisions(nx, nz, .34);
       [nx, nz] = phys.resolvePlayer(nx, nz, my.y, .34, pgState.held); // props shove people
@@ -2121,14 +2125,26 @@ function start(token, user) {
         : hsp > 5.2 ? 'run' : hsp > .5 ? 'walk' : 'idle';
       // gravity — against the walkable surface under our feet (props, ramps,
       // car roofs), not just the world floor
-      const gY = phys.groundAt(my.x, my.z, my.y);
-      if (my.onGround && gY > my.y && gY - my.y <= .68) { my.y = gY; my.vy = 0; } // step/ramp up
+      const grd = phys.groundAt(my.x, my.z, my.y);
+      const gY = grd.y;
+      if (my.onGround && gY > my.y && gY - my.y <= .5) { my.y = gY; my.vy = 0; } // step/ramp up
       my.vy -= 16 * dt;
       my.y += my.vy * dt;
       if (my.y <= gY + 1e-4 && my.vy <= 0) {
-        if (!my.onGround && my.vy < -5) beep(140, .05, 'sine', .05); // landing thud
+        if (!my.onGround) { // touchdown
+          if (my.vy < -5) beep(140, .05, 'sine', .05); // landing thud
+          if (my.vy < -3) phys.stomp(grd.e, my.vy);    // press the prop you landed on
+        }
         my.y = gY; my.vy = 0; my.onGround = true;
       } else if (my.y > gY + .03) my.onGround = false;
+      // standing on a moving prop/car = moving platform: ride it (source-style)
+      if (my.onGround && grd.e && !grd.e.frozen) {
+        const bv = grd.e.body.velocity;
+        if (Math.abs(bv.x) + Math.abs(bv.z) > .02) {
+          my.x += bv.x * dt;
+          my.z += bv.z * dt;
+        }
+      }
       // walked away from pong table?
       if (mg.myPongTable) {
         // anchors from the rotated cafeteria group carry world coords in wx/wz

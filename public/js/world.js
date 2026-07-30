@@ -3056,7 +3056,7 @@ export function resolveCollisions(x, z, r) {
     // Probe at the contact point on the box, not the player center.
     if (c.hAt && x >= c.x0 - .34 && x <= c.x1 + .34 && z >= c.z0 - .34 && z <= c.z1 + .34) {
       const h = c.hAt(Math.max(c.x0, Math.min(x, c.x1)), Math.max(c.z0, Math.min(z, c.z1)));
-      if (h == null || h - (W.feetY || 0) <= .68) continue;
+      if (h == null || h - (W.feetY || 0) <= .5) continue;
     }
     const nx = Math.max(c.x0, Math.min(x, c.x1));
     const nz = Math.max(c.z0, Math.min(z, c.z1));
