@@ -126,6 +126,7 @@ export function setAppearance(key, ap) {
 
 export const ITEM_IDS = ['chips','soda','candy','coffee','energy','water','food',
   'paddle','broom','tapegun','tube','wrench','banana','physgun','flashlight',
+  'wood','stone','axe','pickaxe','stoneaxe','stonepick','pistol','wall','floor',
   'hat-cap','hat-beanie','hat-hardhat','vest-yellow','vest-orange','vest-green','vest-blue','vest-pink'];
 export function setInventory(key, inv, hotbar) {
   const u = users[key] || guests.get(key);
@@ -134,7 +135,7 @@ export function setInventory(key, inv, hotbar) {
   const cleanSlot = (s) => {
     if (!s || typeof s !== 'object') return null;
     if (!ITEM_IDS.includes(s.id)) return null;
-    return { id: s.id, n: Math.max(1, Math.min(99, Math.floor(Number(s.n) || 1))) };
+    return { id: s.id, n: Math.max(1, Math.min(999, Math.floor(Number(s.n) || 1))) };
   };
   u.inv = inv.map(cleanSlot);
   u.hotbar = hotbar.map(cleanSlot);

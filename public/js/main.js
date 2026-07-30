@@ -10,7 +10,7 @@ import { initProps } from './props.js';
 import { initEditor } from './editor.js';
 import { initPhysics, PHYS_KINDS } from './physics.js';
 import { initLighting, enableShadows } from './lighting.js';
-import { ct } from './textures.js';
+import { ct, woodTexture } from './textures.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -324,6 +324,9 @@ function start(token, user) {
 
   function doSwing() {
     if (my.held && ITEMS[my.held]?.type !== 'melee') return; // empty hand = fists
+    const nowS = performance.now();
+    if (nowS - (doSwing._t || 0) < 320) return;
+    doSwing._t = nowS;
     myAvatar.swing();
     vmSwing = 1;
     net.send({ t: 'swing' });
@@ -331,6 +334,40 @@ function start(token, user) {
     // send nearby physics props flying
     const fx = -Math.sin(my.yaw), fz = -Math.cos(my.yaw);
     if (phys.smack(my.x, my.y, my.z, fx, fz)) beep(160, .08, 'square', .09);
+    // harvest: chop trees / mine rocks in front
+    const toolWood = my.held === 'stoneaxe' ? 3 : my.held === 'axe' ? 2 : 1;
+    const toolStone = my.held === 'stonepick' ? 3 : my.held === 'pickaxe' ? 2 : 1;
+    for (const k of W.knockables) {
+      if (k.down || (k.kind !== 'tree' && k.kind !== 'rock')) continue;
+      const ddx = k.x - my.x, ddz = k.z - my.z;
+      const d2 = Math.hypot(ddx, ddz);
+      if (d2 > k.r + 1.6 || (ddx * fx + ddz * fz) / (d2 || 1) < .35) continue;
+      const isTree = k.kind === 'tree';
+      const power = isTree ? toolWood : toolStone;
+      k.hp -= power;
+      const mat = isTree ? 'wood' : 'stone';
+      const got = power + (Math.random() < .5 ? 1 : 0);
+      invApi.add(mat, got);
+      toast(`${ITEMS[mat].icon} +${got} ${mat}`, 900);
+      beep(isTree ? 190 : 320, .07, isTree ? 'square' : 'triangle', .13);
+      k.obj.scale.setScalar(1.045);
+      setTimeout(() => { if (!k.down) k.obj.scale.setScalar(1); }, 90);
+      if (k.hp <= 0) {
+        invApi.add(mat, 4); // felling / shattering bonus
+        toast(`${ITEMS[mat].icon} +4 bonus — ${isTree ? 'timber!' : 'rock shattered!'}`, 1600);
+        knockIt(k, ddx / (d2 || 1), ddz / (d2 || 1), true);
+      }
+      return; // the swing spent itself on the resource
+    }
+    // whack placed base pieces
+    for (const e of buildMap.values()) {
+      const ddx = e.b.p[0] - my.x, ddz = e.b.p[2] - my.z;
+      const d2 = Math.hypot(ddx, ddz);
+      if (d2 > 3 || (ddx * fx + ddz * fz) / (d2 || 1) < .3) continue;
+      net.send({ t: 'build', op: 'hit', id: e.b.id, item: my.held });
+      beep(140, .07, 'square', .12);
+      return;
+    }
     // did we clock somebody? nearest target in a front cone
     let victim = null, bestD = 1.9;
     for (const [id, o] of others) {
@@ -365,6 +402,9 @@ function start(token, user) {
     if (!r) { doSwing(); return; } // nothing selected: throw hands
     if (r.melee === 'physgun') { toast('🧲 Hold left-click to grab · wheel push/pull · R spin · X delete · Q spawns props'); return; }
     if (r.melee === 'flashlight') { toast('🔦 Lights wherever you look — best after dark.'); return; }
+    if (ITEMS[r.melee]?.type === 'gun') { firePistol(); return; }
+    if (ITEMS[r.melee]?.type === 'build') { placeBuild(); return; }
+    if (ITEMS[r.melee]?.type === 'mat') { toast('🔨 Raw material — press C to craft with it.'); return; }
     if (r.melee) { doSwing(); return; }
     if (r.def) {
       toast(`😋 ${r.def.icon} ${r.def.name} — delicious.`);
@@ -383,6 +423,7 @@ function start(token, user) {
     } else if (e.code === 'KeyV') setFP(!fp);
     else if (e.code === 'KeyF') useKey();
     else if (e.code === 'KeyQ') toggleSpawn();
+    else if (e.code === 'KeyC') toggleCraft();
     else if (e.code === 'KeyG') { e.preventDefault(); openTag(); }
     else if (e.code === 'KeyH') { const dropId = invApi.dropSelected(); if (dropId) { dropItemInWorld(dropId); beep(340, .05, 'sine', .07); } }
     else if (e.code === 'KeyX' && pgState.held && !pgState.held.isCar) net.send({ t: 'prop', op: 'del', id: pgState.held.id });
@@ -422,8 +463,9 @@ function start(token, user) {
     if (e.code === 'Enter' && !input.chatOpen && !mg.inArcade() && started) { openChat(); e.preventDefault(); }
     else if (e.code === 'Escape' && input.chatOpen) { if (tagOpen) closeTag(); else closeChat(); }
     else if (e.code === 'Escape' && started) {
-      // Escape closes the top UI panel (spawn/inventory/settings) like any game menu
-      if (spawnOpen) toggleSpawn(false);
+      // Escape closes the top UI panel (craft/spawn/inventory/settings) like any game menu
+      if (craftOpen) toggleCraft(false);
+      else if (spawnOpen) toggleSpawn(false);
       else if (invApi.state.open) invApi.toggle(false);
       else if (!$('settings').classList.contains('hidden')) { $('settings').classList.add('hidden'); uiFocus('settings', false); }
     }
@@ -450,6 +492,7 @@ function start(token, user) {
     (m.props || []).forEach(pr => phys.add(pr));
     (m.tags || []).forEach(addMark);
     (m.drops || []).forEach(addWorldDrop);
+    (m.builds || []).forEach(addBuild);
     // the HALL OF RECORDS by the front walkway — numbers that only ever grow
     if (m.visitorNum) {
       const pad6 = (v) => String(Math.min(v ?? 0, 999999)).padStart(6, '0');
@@ -504,6 +547,16 @@ function start(token, user) {
       const back = new THREE.Mesh(new THREE.PlaneGeometry(3.7, 1.85), new THREE.MeshStandardMaterial({ color: 0x181d23, roughness: .8, side: THREE.BackSide }));
       back.position.set(0, 2.6, .012);
       sg.add(back);
+      // plaque under the board: tell people about the marker
+      const plaqueTex = ct(768, 96, (g, w, h) => {
+        g.fillStyle = '#161b21'; g.fillRect(0, 0, w, h);
+        g.strokeStyle = '#3a4450'; g.lineWidth = 6; g.strokeRect(3, 3, w - 6, h - 6);
+        g.fillStyle = '#ffd34d'; g.font = '600 36px "Segoe UI", sans-serif'; g.textAlign = 'center';
+        g.fillText('🖊️  press G to leave your mark — it stays forever', w / 2, 62);
+      });
+      const plaque = new THREE.Mesh(new THREE.PlaneGeometry(3.1, .39), new THREE.MeshBasicMaterial({ map: plaqueTex }));
+      plaque.position.y = 1.43;
+      sg.add(plaque);
       sg.position.set(103, 0, 6.6);
       sg.rotation.y = Math.PI;
       scene.add(sg);
@@ -557,7 +610,24 @@ function start(token, user) {
       beep(170, .1, 'sawtooth', .13);
     }
   }
-  net.on('hp', (m) => { if (m.id === myId) setHp(m.hp, m.by != null); });
+  function hitmarker(hs) {
+    const hm = $('hitmark');
+    hm.style.opacity = 1;
+    clearTimeout(hitmarker._t);
+    hitmarker._t = setTimeout(() => { hm.style.opacity = 0; }, 140);
+    beep(hs ? 1250 : 950, .05, 'sine', .14);
+    if (hs) {
+      const ht = $('headshot-tag');
+      ht.style.opacity = 1;
+      clearTimeout(hitmarker._h);
+      hitmarker._h = setTimeout(() => { ht.style.opacity = 0; }, 550);
+    }
+  }
+  net.on('hp', (m) => {
+    if (m.id === myId) { setHp(m.hp, m.by != null); return; }
+    others.get(m.id)?.avatar.flash?.(); // victims glow red so everyone can tell
+    if (m.by === myId) hitmarker(m.hs === true);
+  });
   net.on('died', (m) => {
     setHp(100, false);
     my.x = m.x; my.z = m.z; my.y = 0; my.vy = 0;
@@ -811,6 +881,185 @@ function start(token, user) {
     toast(`${PHYS_KINDS[kind].icon} ${PHYS_KINDS[kind].label} incoming!`);
   }
 
+  // ---------- crafting (C) — rust-lite ----------
+  const RECIPES = [
+    { id: 'axe', cost: { wood: 15 }, desc: 'Chops trees 2× faster, 14 dmg' },
+    { id: 'pickaxe', cost: { wood: 12, stone: 6 }, desc: 'Mines rocks 2× faster, 12 dmg' },
+    { id: 'stoneaxe', cost: { wood: 12, stone: 18 }, desc: 'Upgraded axe: 3× wood, 18 dmg' },
+    { id: 'stonepick', cost: { wood: 10, stone: 22 }, desc: 'Upgraded pick: 3× stone, 15 dmg' },
+    { id: 'wall', cost: { wood: 12 }, desc: 'Placeable wall · upgradable to stone' },
+    { id: 'floor', cost: { wood: 8 }, desc: 'Placeable floor panel' },
+    { id: 'pistol', cost: { wood: 25, stone: 40 }, desc: 'Hitscan, 20 dmg — 40 on headshots' },
+  ];
+  const craftEl = $('craft-menu'), craftList = $('craft-list'), craftHave = $('craft-have');
+  let craftOpen = false;
+  function renderCraft() {
+    craftHave.textContent = `you have: 🪵 ${invApi.count('wood')} wood · 🪨 ${invApi.count('stone')} stone`;
+    craftList.innerHTML = '';
+    for (const r of RECIPES) {
+      const d = ITEMS[r.id];
+      const cost = Object.entries(r.cost).map(([k, v]) => `${ITEMS[k].icon}${v}`).join(' + ');
+      const can = Object.entries(r.cost).every(([k, v]) => invApi.count(k) >= v);
+      const row = document.createElement('div');
+      row.className = 'craft-row';
+      row.innerHTML = `<span class="ci">${d.icon}</span><span class="cn">${d.name}<small>${cost} — ${r.desc}</small></span>`;
+      const b = document.createElement('button');
+      b.textContent = 'Craft';
+      b.disabled = !can;
+      b.onclick = () => {
+        if (!Object.entries(r.cost).every(([k, v]) => invApi.count(k) >= v)) return;
+        for (const [k, v] of Object.entries(r.cost)) invApi.consume(k, v);
+        invApi.add(r.id);
+        beep(740, .09, 'sine', .1);
+        toast(`🔨 Crafted ${d.icon} ${d.name}`);
+        renderCraft();
+      };
+      row.appendChild(b);
+      craftList.appendChild(row);
+    }
+  }
+  function toggleCraft(open) {
+    craftOpen = open ?? !craftOpen;
+    craftEl.classList.toggle('hidden', !craftOpen);
+    uiFocus('craft', craftOpen);
+    if (craftOpen) renderCraft();
+  }
+
+  // ---------- base building: walls & floors with hp and upgrades ----------
+  const buildMap = new Map(); // id -> {b, mesh, col, body, inter}
+  const tierM = {
+    woodWall: new THREE.MeshStandardMaterial({ map: woodTexture('#a8896a', '#8a6a4e'), roughness: .85 }),
+    stoneWall: new THREE.MeshStandardMaterial({ color: 0x8d9196, roughness: .95 }),
+  };
+  function buildLabel(b) {
+    return b.tier === 'wood'
+      ? `${b.kind === 'wall' ? 'Wall' : 'Floor'} (wood) — E: upgrade to stone (15 🪨)`
+      : `${b.kind === 'wall' ? 'Wall' : 'Floor'} (stone)`;
+  }
+  function addBuild(b) {
+    removeBuild(b.id);
+    const mat = b.tier === 'wood' ? tierM.woodWall : tierM.stoneWall;
+    const mesh = b.kind === 'wall'
+      ? new THREE.Mesh(new THREE.BoxGeometry(3, 3, .22), mat)
+      : new THREE.Mesh(new THREE.BoxGeometry(3, .15, 3), mat);
+    mesh.position.set(b.p[0], b.p[1], b.p[2]);
+    mesh.rotation.y = b.ry;
+    enableShadows(mesh);
+    scene.add(mesh);
+    let col = null, body = null;
+    if (b.kind === 'wall') { // yaw-aware AABB for walking + a real static body for cars
+      const s = Math.abs(Math.sin(b.ry)), c = Math.abs(Math.cos(b.ry));
+      const ex = 1.5 * s + .13 * c, ez = 1.5 * c + .13 * s;
+      col = { x0: b.p[0] - ex, x1: b.p[0] + ex, z0: b.p[2] - ez, z1: b.p[2] + ez };
+      W.colliders.push(col);
+      body = phys.addStatic(col.x0, col.x1, col.z0, col.z1, 0, 3);
+    }
+    const inter = { id: `build-${b.id}`, type: 'build', x: b.p[0], z: b.p[2], r: 2.4, label: buildLabel(b), data: { build: b.id } };
+    W.interactables.push(inter);
+    buildMap.set(b.id, { b, mesh, col, body, inter });
+  }
+  function removeBuild(id) {
+    const e = buildMap.get(id);
+    if (!e) return;
+    scene.remove(e.mesh);
+    if (e.col) { const i = W.colliders.indexOf(e.col); if (i !== -1) W.colliders.splice(i, 1); }
+    if (e.body) phys.removeStatic(e.body);
+    const j = W.interactables.indexOf(e.inter);
+    if (j !== -1) W.interactables.splice(j, 1);
+    buildMap.delete(id);
+  }
+  net.on('build', (m) => {
+    if (m.op === 'add') addBuild(m.b);
+    else if (m.op === 'del') { removeBuild(m.id); beep(120, .2, 'square', .12); }
+    else if (m.op === 'hp') {
+      const e = buildMap.get(m.id);
+      if (e) { e.b.hp = m.hp; e.mesh.position.y += .015; setTimeout(() => { e.mesh.position.y = e.b.p[1]; }, 60); }
+    } else if (m.op === 'upgrade') {
+      const e = buildMap.get(m.id);
+      if (e) { e.b.tier = m.tier; e.b.hp = m.hp; addBuild(e.b); beep(820, .1, 'sine', .12); }
+    }
+  });
+  // placement ghost while a build item is equipped
+  const ghostM = new THREE.MeshBasicMaterial({ color: 0x37e06f, transparent: true, opacity: .35, depthWrite: false });
+  const ghosts = {
+    wall: new THREE.Mesh(new THREE.BoxGeometry(3, 3, .22), ghostM),
+    floor: new THREE.Mesh(new THREE.BoxGeometry(3, .15, 3), ghostM),
+  };
+  ghosts.wall.visible = ghosts.floor.visible = false;
+  scene.add(ghosts.wall, ghosts.floor);
+  function ghostPose() {
+    const fx = -Math.sin(my.yaw), fz = -Math.cos(my.yaw);
+    const ry = Math.round(my.yaw / (Math.PI / 12)) * (Math.PI / 12);
+    return { x: +(my.x + fx * 2.9).toFixed(2), z: +(my.z + fz * 2.9).toFixed(2), ry: +ry.toFixed(3) };
+  }
+  function placeBuild() {
+    const kind = my.held;
+    const g = ghostPose();
+    const used = invApi.dropSelected(); // consumes one from the equipped stack
+    if (used !== kind) return;
+    net.send({ t: 'build', op: 'place', kind, p: [g.x, kind === 'wall' ? 1.5 : .08, g.z], ry: g.ry });
+    beep(520, .07, 'sine', .1);
+  }
+
+  // ---------- pistol ----------
+  const tracers = []; // {line, ttl}
+  const tracerM = new THREE.LineBasicMaterial({ color: 0xffd27a, transparent: true, opacity: .9, blending: THREE.AdditiveBlending, depthTest: false });
+  function drawTracer(from, to) {
+    const geo = new THREE.BufferGeometry().setFromPoints([from, to]);
+    const line = new THREE.Line(geo, tracerM.clone());
+    line.renderOrder = 8;
+    line.frustumCulled = false;
+    scene.add(line);
+    tracers.push({ line, ttl: .12 });
+  }
+  let lastFire = 0;
+  function firePistol() {
+    const now = performance.now();
+    if (now - lastFire < 380) return;
+    lastFire = now;
+    myAvatar.swing();
+    vmSwing = 1;
+    beep(1600, .03, 'square', .12);
+    beep(160, .12, 'sawtooth', .16);
+    // small ray fan — a single hairline ray whiffs on thin avatars at range
+    let best = null; // {d, kind, id, point, hs}
+    for (const [ox, oy] of [[0, 0], [.012, 0], [-.012, 0], [0, .012], [0, -.012]]) {
+      pgRay.setFromCamera(new THREE.Vector2(ox, oy), camera);
+      pgRay.far = 50;
+      for (const [id, o] of others) {
+        const hits = pgRay.intersectObject(o.avatar.group, true);
+        if (hits.length && (!best || hits[0].distance < best.d)) {
+          const hy = hits[0].point.y - o.avatar.group.position.y;
+          best = { d: hits[0].distance, kind: 'player', id, point: hits[0].point, hs: hy > 1.45 };
+        }
+      }
+      for (const [key, s] of sleeperMap) {
+        const hits = pgRay.intersectObject(s.root, true);
+        if (hits.length && (!best || hits[0].distance < best.d)) best = { d: hits[0].distance, kind: 'sleeper', id: key, point: hits[0].point, hs: false };
+      }
+      for (const e of buildMap.values()) {
+        const hits = pgRay.intersectObject(e.mesh, false);
+        if (hits.length && (!best || hits[0].distance < best.d)) best = { d: hits[0].distance, kind: 'build', id: e.b.id, point: hits[0].point };
+      }
+    }
+    pgRay.setFromCamera(new THREE.Vector2(0, 0), camera);
+    pgRay.far = 50;
+    const wallHits = pgRay.intersectObjects(W.camBlockers, false);
+    if (wallHits.length && (!best || wallHits[0].distance < best.d)) best = { d: wallHits[0].distance, kind: 'world', point: wallHits[0].point };
+    const end = best ? best.point : pgRay.ray.origin.clone().addScaledVector(pgRay.ray.direction, 50);
+    drawTracer(myBeamFrom(), end);
+    net.send({ t: 'shoot', to: [+end.x.toFixed(1), +end.y.toFixed(1), +end.z.toFixed(1)] });
+    if (best?.kind === 'player') net.send({ t: 'hit', target: best.id, item: 'pistol', hs: best.hs });
+    else if (best?.kind === 'sleeper') net.send({ t: 'hit', sleeper: best.id, item: 'pistol' });
+    else if (best?.kind === 'build') net.send({ t: 'build', op: 'hit', id: best.id, item: 'pistol' });
+  }
+  net.on('shoot', (m) => {
+    const o = others.get(m.id);
+    const from = o ? o.avatar.heldAnchor.getWorldPosition(new THREE.Vector3()) : new THREE.Vector3(m.from[0], m.from[1], m.from[2]);
+    drawTracer(from, new THREE.Vector3(m.to[0], m.to[1], m.to[2]));
+    beep(1400, .03, 'square', .07);
+  });
+
   // ---------- physgun: hold LMB to grab · wheel push/pull · R spin · X delete ----------
   const pgState = { held: null, dist: 0, lmb: false, missT: 0 };
   const pgRay = new THREE.Raycaster();
@@ -854,7 +1103,8 @@ function start(token, user) {
       pgState.lmb = true;
       physgunGrab();
       if (!pgState.held) beep(220, .05, 'square', .04); // dry-fire click
-    }
+    } else if (my.held === 'pistol') firePistol();
+    else if (my.held === 'wall' || my.held === 'floor') placeBuild();
   });
   addEventListener('mouseup', (e) => {
     if (e.button !== 0) return;
@@ -1126,6 +1376,15 @@ function start(token, user) {
         case 'dropitem':
           net.send({ t: 'drop', op: 'take', id: nearest.data.drop });
           return;
+        case 'build': {
+          const be = buildMap.get(nearest.data.build);
+          if (!be) return;
+          if (be.b.tier !== 'wood') { toast('🧱 Already stone — solid.'); return; }
+          if (invApi.count('stone') < 15) { toast('Need 15 🪨 to upgrade this to stone.'); return; }
+          invApi.consume('stone', 15);
+          net.send({ t: 'build', op: 'upgrade', id: be.b.id });
+          return;
+        }
         case 'fire': {
           const sel = invApi.selectedItem();
           if (!sel) { toast('🔥 Warm. Select an item (1–6) and press E to burn it.'); return; }
@@ -1457,27 +1716,51 @@ function start(token, user) {
       if (!k.down) continue;
       k.t += dt;
       const o = k.obj;
-      if (k.t < 1.1) { // topple with a wobble at the end
-        const p = Math.min(1, k.t / 1.1);
-        const fall = 1 - (1 - p) ** 2;
-        const wob = p > .75 ? Math.sin((p - .75) * 26) * .18 * (1 - p) : 0;
-        knockAxis.set(k.dz, 0, -k.dx).normalize();
-        o.quaternion.setFromAxisAngle(knockAxis, (Math.PI / 2 - .1) * fall + wob);
-        o.position.set(
-          o.userData.homePos.x + k.dx * fall * .6,
-          o.userData.homePos.y,
-          o.userData.homePos.z + k.dz * fall * .6,
-        );
+      if (k.t < 1.1) {
+        if (k.kind === 'rock') { // rocks crumble instead of toppling
+          const p = Math.min(1, k.t / .6);
+          o.scale.setScalar(Math.max(.1, 1 - p * .9));
+          o.position.y = o.userData.homePos.y - p * .3;
+        } else { // topple with a wobble at the end
+          const p = Math.min(1, k.t / 1.1);
+          const fall = 1 - (1 - p) ** 2;
+          const wob = p > .75 ? Math.sin((p - .75) * 26) * .18 * (1 - p) : 0;
+          knockAxis.set(k.dz, 0, -k.dx).normalize();
+          o.quaternion.setFromAxisAngle(knockAxis, (Math.PI / 2 - .1) * fall + wob);
+          o.position.set(
+            o.userData.homePos.x + k.dx * fall * .6,
+            o.userData.homePos.y,
+            o.userData.homePos.z + k.dz * fall * .6,
+          );
+        }
       } else if (k.t > k.respawn) { // grow back
         const gr = (k.t - k.respawn) / .5;
         o.quaternion.copy(o.userData.homeQuat);
         o.position.copy(o.userData.homePos);
         if (gr >= 1) {
           k.down = false;
+          k.hp = k.maxHp; // fresh tree, fresh rock
           o.scale.setScalar(1);
           if (k.col) k.col.off = false;
         } else o.scale.setScalar(Math.max(.05, gr));
       }
+    }
+
+    // pistol tracers fade fast
+    for (let ti = tracers.length - 1; ti >= 0; ti--) {
+      const tr = tracers[ti];
+      tr.ttl -= dt;
+      tr.line.material.opacity = Math.max(0, tr.ttl / .12) * .9;
+      if (tr.ttl <= 0) { scene.remove(tr.line); tracers.splice(ti, 1); }
+    }
+    // build-placement ghost follows your aim while a piece is equipped
+    const bkind = (my.held === 'wall' || my.held === 'floor') && !carState.driving ? my.held : null;
+    ghosts.wall.visible = bkind === 'wall';
+    ghosts.floor.visible = bkind === 'floor';
+    if (bkind) {
+      const gp = ghostPose();
+      ghosts[bkind].position.set(gp.x, bkind === 'wall' ? 1.5 : .08, gp.z);
+      ghosts[bkind].rotation.y = gp.ry;
     }
 
     // headlights on driven cars, brighter after dark

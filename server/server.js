@@ -110,6 +110,10 @@ for (const [id, d] of drops) { // sweep anything that ever ended up outside the 
   if (!Number.isFinite(d?.x) || !Number.isFinite(d?.z) || !(d.y >= 0 && d.y <= 8)) drops.delete(id);
 }
 let nextDropId = [...drops.keys()].reduce((m, id) => Math.max(m, Number(String(id).slice(1)) || 0), 0) + 1;
+// base-building pieces: walls/floors with hp, wood→stone upgrades. Persisted.
+const builds = new Map(Object.entries(savedWorld.builds || {})); // id -> {id, kind, tier, p:[x,y,z], ry, hp, owner}
+let nextBuildId = [...builds.keys()].reduce((m, id) => Math.max(m, Number(String(id).slice(1)) || 0), 0) + 1;
+const BUILD_HP = { wood: 200, stone: 500 };
 // permanent marker tags — the "I was here" layer. They outlive everyone.
 const tags = Array.isArray(savedWorld.tags) ? savedWorld.tags : [];
 let nextTagId = tags.reduce((m, t) => Math.max(m, Number(String(t.id).slice(1)) || 0), 0) + 1;
@@ -131,7 +135,7 @@ let worldDirty = false;
 function saveWorld() {
   worldDirty = false;
   const tmp = WORLD_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify({ sleepers: Object.fromEntries(sleepers), cars, props: Object.fromEntries(props), drops: Object.fromEntries(drops), tags, stats }));
+  fs.writeFileSync(tmp, JSON.stringify({ sleepers: Object.fromEntries(sleepers), cars, props: Object.fromEntries(props), drops: Object.fromEntries(drops), builds: Object.fromEntries(builds), tags, stats }));
   fs.renameSync(tmp, WORLD_FILE); // atomic: a crash mid-write can't corrupt the state
 }
 setInterval(() => { if (worldDirty) saveWorld(); }, 10000);
@@ -210,6 +214,7 @@ wss.on('connection', (ws, req) => {
     hp: p.hp,
     tags,
     drops: [...drops.values()],
+    builds: [...builds.values()],
     mapEdits,
     players: [...players.values()].filter(q => q.id !== id).map(pubState),
     c4: { a: c4.a.state(), b: c4.b.state() },
@@ -465,6 +470,54 @@ function handle(p, m) {
       }
       break;
     }
+    case 'shoot': { // tracer relay so everyone sees/hears pistol fire
+      const now = Date.now();
+      if (now - (p.lastShot || 0) < 280) return;
+      p.lastShot = now;
+      const to = Array.isArray(m.to) ? m.to.map(Number) : [];
+      if (to.length !== 3 || !to.every(Number.isFinite)) return;
+      broadcast({ t: 'shoot', id: p.id, from: [+p.x.toFixed(1), 1.5, +p.z.toFixed(1)], to: to.map(n => +n.toFixed(1)) }, p.id);
+      break;
+    }
+    case 'build': { // rust-lite base building
+      if (m.op === 'place') {
+        const now = Date.now();
+        if (now - (p.lastBuild || 0) < 400) return;
+        p.lastBuild = now;
+        if (builds.size >= 300) { if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'sys', text: '🧱 Build limit reached (300).' })); return; }
+        if (!['wall', 'floor'].includes(m.kind)) return;
+        const pos = Array.isArray(m.p) ? m.p.map(Number) : [];
+        if (pos.length !== 3 || !pos.every(Number.isFinite) || !Number.isFinite(+m.ry)) return;
+        const b = {
+          id: 'b' + nextBuildId++, kind: m.kind, tier: 'wood',
+          p: [clampX(pos[0]), Math.max(0, Math.min(12, pos[1])), clampZ(pos[2])],
+          ry: +(+m.ry).toFixed(3), hp: BUILD_HP.wood, owner: p.key,
+        };
+        builds.set(b.id, b);
+        worldDirty = true;
+        broadcast({ t: 'build', op: 'add', b });
+      } else if (m.op === 'hit') {
+        const b = builds.get(String(m.id));
+        if (!b) return;
+        const BDMG = { axe: 10, stoneaxe: 14, pickaxe: 12, stonepick: 16, pistol: 15, wrench: 8 };
+        const dmg = BDMG[String(m.item)] ?? 4;
+        if (Math.hypot(p.x - b.p[0], p.z - b.p[2]) > (m.item === 'pistol' ? 50 : 4.5)) return;
+        b.hp -= dmg;
+        worldDirty = true;
+        if (b.hp <= 0) {
+          builds.delete(b.id);
+          broadcast({ t: 'build', op: 'del', id: b.id });
+        } else broadcast({ t: 'build', op: 'hp', id: b.id, hp: b.hp });
+      } else if (m.op === 'upgrade') {
+        const b = builds.get(String(m.id));
+        if (!b || b.tier !== 'wood') return;
+        b.tier = 'stone';
+        b.hp = BUILD_HP.stone;
+        worldDirty = true;
+        broadcast({ t: 'build', op: 'upgrade', id: b.id, tier: 'stone', hp: b.hp });
+      }
+      break;
+    }
     case 'burn': { // hall-of-records bookkeeping for the barrel
       stats.burns += Math.max(1, Math.min(99, Math.floor(Number(m.n) || 1)));
       worldDirty = true;
@@ -474,16 +527,19 @@ function handle(p, m) {
       const now = Date.now();
       if (now - (p.lastHitAt || 0) < 350) return;
       p.lastHitAt = now;
-      const DMG = { fists: 6, paddle: 10, broom: 12, tapegun: 8, tube: 8, wrench: 15, banana: 4 };
+      const DMG = { fists: 6, paddle: 10, broom: 12, tapegun: 8, tube: 8, wrench: 15, banana: 4, axe: 14, pickaxe: 12, stoneaxe: 18, stonepick: 15, pistol: 20 };
       const weapon = m.item == null ? 'fists' : String(m.item);
-      const dmg = DMG[weapon];
+      let dmg = DMG[weapon];
       if (!dmg) return;
+      const hs = weapon === 'pistol' && m.hs === true;
+      if (hs) dmg *= 2; // headshot
+      const maxRange = weapon === 'pistol' ? 55 : 3.4;
       const label = weapon === 'fists' ? 'their fists' : `a ${weapon}`;
       if (m.sleeper) { // sleepers are fair game — brutal, but this place remembers
         const key = String(m.sleeper);
         const s = sleepers.get(key);
         if (!s) return;
-        if (Math.hypot(p.x - s.x, p.z - s.z) > 3.4) return;
+        if (Math.hypot(p.x - s.x, p.z - s.z) > maxRange) return;
         s.hp = (s.hp ?? 40) - dmg; // sleepers are fragile
         if (s.hp > 0) { worldDirty = true; return; }
         sleepers.delete(key);
@@ -496,10 +552,10 @@ function handle(p, m) {
       }
       const t = players.get(Number(m.target));
       if (!t || t.id === p.id) return;
-      if (Math.hypot(p.x - t.x, p.z - t.z) > 3.4) return;
+      if (Math.hypot(p.x - t.x, p.z - t.z) > maxRange) return;
       t.hp = (t.hp ?? 100) - dmg;
       if (t.hp > 0) {
-        broadcast({ t: 'hp', id: t.id, hp: t.hp, by: p.id });
+        broadcast({ t: 'hp', id: t.id, hp: t.hp, by: p.id, hs });
         return;
       }
       // death: everything they carried spills where they fell, then respawn

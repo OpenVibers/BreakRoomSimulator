@@ -435,9 +435,22 @@ export function initPhysics(scene) {
     yawQ.mult(e.body.quaternion, e.body.quaternion);
   }
 
+  // dynamically placed base pieces need real static bodies (cars must crash
+  // into fresh walls, not phase through until reload)
+  function addStatic(x0, x1, z0, z1, y0, y1) {
+    const b = new CANNON.Body({
+      type: CANNON.Body.STATIC, material: groundMat,
+      shape: new CANNON.Box(new CANNON.Vec3((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2)),
+    });
+    b.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+    world.addBody(b);
+    return b;
+  }
+  function removeStatic(b) { world.removeBody(b); }
+
   return {
     world, props, cars, add, remove, claim, applyState, applyCarState, sendState, sendCarState,
-    drive, step, smack, raycast, yawBody, PHYS_KINDS,
+    drive, step, smack, raycast, yawBody, addStatic, removeStatic, PHYS_KINDS,
     setMyId(id) { myId = id; },
   };
 }

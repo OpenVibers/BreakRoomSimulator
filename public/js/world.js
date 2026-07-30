@@ -18,11 +18,13 @@ export const W = { // world registry
   nightLights: [],     // {light, night} real lights that switch on after dark
   knockables: [],      // trees/lamps/bushes cars can flatten (they respawn)
 };
-// register a crashable decoration: world-space object, hit circle, optional collider
-function knockable(obj, x, z, r, col = null) {
+// register a crashable decoration: world-space object, hit circle, optional
+// collider; kind 'tree'/'rock' makes it harvestable (wood / stone)
+function knockable(obj, x, z, r, col = null, kind = 'decor') {
   obj.userData.homePos = obj.position.clone();
   obj.userData.homeQuat = obj.quaternion.clone();
-  W.knockables.push({ id: 'k' + W.knockables.length, obj, x, z, r, col, down: false });
+  const maxHp = kind === 'tree' ? 6 : kind === 'rock' ? 8 : 1;
+  W.knockables.push({ id: 'k' + W.knockables.length, obj, x, z, r, col, kind, down: false, hp: maxHp, maxHp });
 }
 const blocker = (m) => { W.camBlockers.push(m); return m; };
 
@@ -2345,12 +2347,12 @@ function exteriorEast(scene) {
         t.add(fol);
         t.position.set(bx2, 0, bz);
         scene.add(t);
-        knockable(t, bx2, bz, .7);
+        knockable(t, bx2, bz, .7, null, 'tree');
       } else if (i % 3 === 1) {
         const sh = new THREE.Mesh(new THREE.SphereGeometry(.42, 8, 6), new THREE.MeshStandardMaterial({ color: 0x3f6f35, roughness: .95 }));
         sh.position.set(bx2, .3, bz);
         scene.add(sh);
-        knockable(sh, bx2, bz, .55);
+        knockable(sh, bx2, bz, .55, null, 'bush');
       } else {
         for (let gj = 0; gj < 3; gj++) {
           const grass = new THREE.Mesh(new THREE.ConeGeometry(.3, .9, 5), new THREE.MeshStandardMaterial({ color: 0x6d8a4e, roughness: .95 }));
@@ -2683,7 +2685,7 @@ function streets(scene) {
     sg.add(s, back);
     sg.position.set(sx, 0, sz);
     scene.add(sg);
-    knockable(sg, sx, sz, .6); // no collider — mow it down, it comes back
+    knockable(sg, sx, sz, .6, null, 'sign'); // no collider — mow it down, it comes back
   }
   // street lights along 172nd
   const lampM = new THREE.MeshStandardMaterial({ color: 0xfff3c9, emissive: 0xfff3c9, emissiveIntensity: .9 });
@@ -2702,7 +2704,7 @@ function streets(scene) {
     scene.add(lamp);
     const c = collide(132.2, lz, .3, .3);
     c.kn = true; // knockable: cars plow through, the pole tips over
-    knockable(lamp, 132.2, lz, .7, c);
+    knockable(lamp, 132.2, lz, .7, c, 'lamp');
   }
   // ---- Longhouse Trail houses ----
   const house = (hx, hz, ry, cBody, cRoof, isHome) => {
@@ -2745,6 +2747,52 @@ function streets(scene) {
   scene.add(mbPost);
   scene.add(box(.5, .3, .32, new THREE.MeshStandardMaterial({ color: 0x2e4d8a, roughness: .5 }), 27.4, 1.2, 172.2));
   inter({ id: 'home', type: 'home', x: 30, z: 174.2, r: 2.4, label: 'You made it — go relax 🏠' });
+  // ---- the wilds: a grove to chop and rocks to mine on the outskirts ----
+  const foliageM = new THREE.MeshStandardMaterial({ color: 0x4c7a3d, roughness: .9 });
+  const foliageM2 = new THREE.MeshStandardMaterial({ color: 0x5b8a42, roughness: .9 });
+  for (const [tx, tz, big] of [
+    [18, 122, 1], [26, 128, 0], [36, 124, 1], [47, 130, 0], [58, 126, 1],
+    [70, 132, 0], [82, 128, 1], [94, 134, 0], [106, 128, 1], [118, 134, 0],
+    [124, 96, 1], [126, 78, 0], [124, 22, 1], [126, -18, 0], [110, -32, 1],
+    [80, -36, 0], [50, -34, 1], [20, -30, 0],
+  ]) {
+    const tree = new THREE.Group();
+    tree.add(cyl(.1, .14, big ? 2.2 : 1.6, M.woodDark, 0, big ? 1.1 : .8, 0, 8));
+    const fol = new THREE.Mesh(new THREE.SphereGeometry(big ? 1.5 : 1.1, 10, 8), big ? foliageM : foliageM2);
+    fol.position.y = big ? 3.1 : 2.3;
+    fol.scale.y = 1.3;
+    tree.add(fol);
+    tree.position.set(tx, 0, tz);
+    scene.add(tree);
+    const c = collide(tx, tz, .5, .5);
+    c.kn = true;
+    knockable(tree, tx, tz, 1.2, c, 'tree');
+  }
+  // rock formations — mine them for stone
+  const rockM = new THREE.MeshStandardMaterial({ color: 0x8b8f94, roughness: .95, flatShading: true });
+  const rockM2 = new THREE.MeshStandardMaterial({ color: 0x777c82, roughness: .95, flatShading: true });
+  for (const [rx, rz, rs] of [
+    [142, -44, 1.2], [144, 30, .9], [143, 108, 1.3], [140, 160, 1],
+    [96, 180, 1.2], [40, 182, .9], [-30, 160, 1.1], [-60, 120, 1.3],
+    [-64, 40, 1], [12, 118, .8],
+  ]) {
+    const rock = new THREE.Group();
+    const r1 = new THREE.Mesh(new THREE.DodecahedronGeometry(rs, 0), rockM);
+    r1.position.y = rs * .55;
+    r1.scale.y = .72;
+    r1.rotation.y = rx * .7;
+    rock.add(r1);
+    const r2 = new THREE.Mesh(new THREE.DodecahedronGeometry(rs * .55, 0), rockM2);
+    r2.position.set(rs * .7, rs * .3, rs * .3);
+    r2.scale.y = .7;
+    rock.add(r2);
+    rock.position.set(rx, 0, rz);
+    scene.add(rock);
+    const c = collide(rx, rz, rs * 2, rs * 2);
+    c.kn = true; // cars smash through (and shatter the rock)
+    knockable(rock, rx, rz, rs + .6, c, 'rock');
+  }
+
   // ---- burn barrel on the outskirts: the night-shift hangout. Toss junk in
   // and it's gone forever (E with an item selected, or drop stuff into it) ----
   const rustBarrelM = new THREE.MeshStandardMaterial({ color: 0x6e4530, roughness: .85, metalness: .3 });
@@ -2867,7 +2915,7 @@ function streets(scene) {
     scene.add(tree);
     const c = collide(tx, tz, .4, .4);
     c.kn = true;
-    knockable(tree, tx, tz, 1.1, c);
+    knockable(tree, tx, tz, 1.1, c, 'tree');
   }
 
   // ---- the secret: a rusty container behind the smoke cage, something golden inside ----

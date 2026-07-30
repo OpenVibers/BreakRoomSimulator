@@ -145,6 +145,27 @@ body.touch #hotbar { bottom: calc(96px + env(safe-area-inset-bottom)); }
 #tag-form input::placeholder { color: rgba(255,211,77,.45); }
 
 /* ---------- health ---------- */
-#hp-wrap { position: absolute; bottom: 98px; left: 50%; transform: translateX(-50%); width: 340px; height: 10px; background: rgba(10,14,20,.6); border: 1px solid rgba(255,255,255,.18); border-radius: 6px; overflow: hidden; z-index: 12; }
+#hp-wrap { position: fixed; bottom: calc(88px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); width: 340px; height: 10px; background: rgba(10,14,20,.6); border: 1px solid rgba(255,255,255,.18); border-radius: 6px; overflow: hidden; z-index: 21; }
+body.touch #hp-wrap { bottom: calc(174px + env(safe-area-inset-bottom)); }
 #hp-fill { height: 100%; width: 100%; background: #37e06f; transition: width .18s ease, background .3s ease; }
 #dmg-flash { position: absolute; inset: 0; background: radial-gradient(ellipse at center, rgba(226,38,45,0) 42%, rgba(226,38,45,.75) 100%); opacity: 0; pointer-events: none; transition: opacity .35s ease; z-index: 40; }
+
+
+/* ---------- combat feedback ---------- */
+#hitmark { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%) rotate(45deg); width: 26px; height: 26px; opacity: 0; pointer-events: none; z-index: 30; transition: opacity .15s ease; }
+#hitmark::before, #hitmark::after { content: ''; position: absolute; background: #ff5348; box-shadow: 0 0 6px rgba(255,60,50,.9); }
+#hitmark::before { left: 11px; top: 0; width: 4px; height: 26px; }
+#hitmark::after { top: 11px; left: 0; height: 4px; width: 26px; }
+#headshot-tag { position: absolute; left: 50%; top: 42%; transform: translateX(-50%); color: #ff5348; font: 900 26px "Segoe UI", sans-serif; letter-spacing: .18em; text-shadow: 0 0 14px rgba(255,60,50,.8); opacity: 0; pointer-events: none; z-index: 30; transition: opacity .2s ease; }
+
+/* ---------- crafting menu ---------- */
+#craft-menu { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); background: rgba(12,16,22,.95); border: 1px solid rgba(255,255,255,.12); border-radius: 14px; padding: 16px 18px; z-index: 30; width: 460px; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+#craft-menu h3 { color: #dfe7f0; margin-bottom: 4px; }
+#craft-menu .have { color: #8fa0b3; font-size: .85rem; margin-bottom: 12px; }
+#craft-list { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
+.craft-row { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: 8px 12px; }
+.craft-row .ci { font-size: 1.4rem; }
+.craft-row .cn { flex: 1; color: #dfe7f0; font-size: .92rem; }
+.craft-row .cn small { display: block; color: #8fa0b3; }
+.craft-row button { background: rgba(55,224,111,.15); border: 1px solid #37e06f; color: #b8f5cf; border-radius: 8px; padding: 6px 14px; cursor: pointer; font-family: inherit; }
+.craft-row button:disabled { background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.15); color: #5d6b7a; cursor: default; }

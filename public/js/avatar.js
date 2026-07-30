@@ -48,6 +48,13 @@ export const GRIPS = {
   banana:  { p: [0, .04, .05], r: [-1.9, .3, .6] },
   physgun: { p: [0, .03, .06], r: [-1.45, 0, 0] },
   flashlight: { p: [0, .03, .05], r: [-1.4, 0, 0] },
+  axe:       { p: [0, .1, .04], r: [-1.0, 0, .1] },
+  stoneaxe:  { p: [0, .1, .04], r: [-1.0, 0, .1] },
+  pickaxe:   { p: [0, .1, .04], r: [-1.0, 0, .1] },
+  stonepick: { p: [0, .1, .04], r: [-1.0, 0, .1] },
+  pistol:    { p: [0, .04, .05], r: [-1.55, 0, 0] },
+  wall:      { p: [0, .04, .05], r: [-.6, 0, 0] },
+  floor:     { p: [0, .04, .05], r: [-.6, 0, 0] },
   chips:   { p: [0, .04, .05], r: [-.5, 0, 0] },
   food:    { p: [0, .02, .06], r: [-.4, 0, 0] },
   candy:   { p: [0, .03, .05], r: [-.5, 0, 0] },
@@ -98,6 +105,43 @@ export function buildHeldMesh(item) {
     const b = new THREE.Mesh(new THREE.TorusGeometry(.09, .026, 8, 12, Math.PI * .9), new THREE.MeshStandardMaterial({ color: 0xf2d21f, roughness: .6 }));
     b.rotation.z = .6;
     g.add(b);
+  } else if (item === 'axe' || item === 'stoneaxe' || item === 'pickaxe' || item === 'stonepick') {
+    const stone = item.startsWith('stone');
+    const headM = new THREE.MeshStandardMaterial({ color: stone ? 0x757b82 : 0x9aa4ae, roughness: stone ? .85 : .35, metalness: stone ? .1 : .6 });
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(.02, .024, .62, 8), wood);
+    pole.position.y = -.14;
+    g.add(pole);
+    if (item.includes('axe')) {
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(.05, .16, .14), headM);
+      blade.position.set(0, .14, .08);
+      g.add(blade);
+    } else { // pick: two tapered spikes
+      for (const s of [-1, 1]) {
+        const spike = new THREE.Mesh(new THREE.ConeGeometry(.035, .2, 6), headM);
+        spike.rotation.x = s * Math.PI / 2;
+        spike.position.set(0, .15, s * .12);
+        g.add(spike);
+      }
+    }
+  } else if (item === 'pistol') {
+    const gm = new THREE.MeshStandardMaterial({ color: 0x23272d, roughness: .35, metalness: .5 });
+    const slide = new THREE.Mesh(new THREE.BoxGeometry(.05, .06, .22), gm);
+    slide.position.set(0, .03, -.05);
+    g.add(slide);
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(.045, .13, .06), new THREE.MeshStandardMaterial({ color: 0x33281c, roughness: .7 }));
+    grip.position.set(0, -.05, .05);
+    grip.rotation.x = .25;
+    g.add(grip);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(.014, .014, .07, 8), gm);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(0, .035, -.18);
+    g.add(barrel);
+  } else if (item === 'wall' || item === 'floor') {
+    for (let i = 0; i < 3; i++) { // bundle of planks
+      const pl = new THREE.Mesh(new THREE.BoxGeometry(.05, .02, .34), wood);
+      pl.position.set((i - 1) * .05, i * .02, 0);
+      g.add(pl);
+    }
   } else if (item === 'flashlight') {
     const bodyC = new THREE.Mesh(new THREE.CylinderGeometry(.035, .042, .22, 10), dark);
     bodyC.rotation.x = Math.PI / 2;
@@ -272,6 +316,19 @@ export function makeAvatar(name, vest = 'yellow', guest = false, ap = null) {
       av.heldMesh = m;
     },
     swing() { av.swingT = 1; },
+    flash() { // hurt: whole body glows red for a beat
+      for (const m of [shirtM, skinM, pantsM, parts.vest.material]) {
+        m.emissive.setHex(0xd42020);
+        m.emissiveIntensity = .85;
+      }
+      clearTimeout(av._flashT);
+      av._flashT = setTimeout(() => {
+        for (const m of [shirtM, skinM, pantsM, parts.vest.material]) {
+          m.emissive.setHex(0x000000);
+          m.emissiveIntensity = 0;
+        }
+      }, 160);
+    },
     say(text) {
       const tex = ct(512, 160, (gg, w, h) => {
         gg.font = '400 26px "Segoe UI", sans-serif';

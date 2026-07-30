@@ -20,6 +20,15 @@ export const ITEMS = {
   banana:  { name: 'Banana',       icon: '🍌', type: 'melee' },
   physgun: { name: 'Physgun',      icon: '🧲', type: 'tool' },
   flashlight: { name: 'Flashlight', icon: '🔦', type: 'tool' },
+  wood:      { name: 'Wood',        icon: '🪵', type: 'mat' },
+  stone:     { name: 'Stone',       icon: '🪨', type: 'mat' },
+  axe:       { name: 'Axe',         icon: '🪓', type: 'melee' },
+  pickaxe:   { name: 'Pickaxe',     icon: '⛏️', type: 'melee' },
+  stoneaxe:  { name: 'Stone axe',   icon: '🪓', type: 'melee' },
+  stonepick: { name: 'Stone pickaxe', icon: '⛏️', type: 'melee' },
+  pistol:    { name: 'Pistol',      icon: '🔫', type: 'gun' },
+  wall:      { name: 'Wood wall',   icon: '🧱', type: 'build' },
+  floor:     { name: 'Wood floor',  icon: '🟫', type: 'build' },
   'hat-cap':     { name: 'Cap',      icon: '🧢', type: 'clothes', ap: { hat: 1 } },
   'hat-beanie':  { name: 'Beanie',   icon: '👒', type: 'clothes', ap: { hat: 2 } },
   'hat-hardhat': { name: 'Hard hat', icon: '⛑️', type: 'clothes', ap: { hat: 3 } },
@@ -125,7 +134,7 @@ export function initInventory({ me, onEquip, onWear, onDropItem, toast }) {
     }
     if (to.arr === from.arr && to.i === from.i) return;
     const a = from.arr[from.i], b = to.arr[to.i];
-    if (b && a && b.id === a.id && ITEMS[a.id].type === 'food') { // stack
+    if (b && a && b.id === a.id && ['food', 'mat', 'build'].includes(ITEMS[a.id].type)) { // stack
       b.n += a.n; from.arr[from.i] = null;
     } else {
       from.arr[from.i] = b || null;
@@ -170,7 +179,7 @@ export function initInventory({ me, onEquip, onWear, onDropItem, toast }) {
 
   // ---------- API ----------
   function findRoom(id) {
-    const stack = ITEMS[id].type === 'food';
+    const stack = ['food', 'mat', 'build'].includes(ITEMS[id].type);
     if (stack) {
       const h = inv.hotbar.find(s => s?.id === id);
       if (h) return h;
@@ -233,6 +242,30 @@ export function initInventory({ me, onEquip, onWear, onDropItem, toast }) {
     renderHotbar(); renderInv();
   }
 
+  // crafting support: how many of an item across all slots / consume n of it
+  function count(id) {
+    let n = 0;
+    for (const s2 of [...inv.slots, ...inv.hotbar]) if (s2?.id === id) n += s2.n;
+    return n;
+  }
+  function consume(id, n) {
+    if (count(id) < n) return false;
+    for (const arr of [inv.slots, inv.hotbar]) {
+      for (let i = 0; i < arr.length && n > 0; i++) {
+        const s2 = arr[i];
+        if (s2?.id !== id) continue;
+        const take = Math.min(s2.n, n);
+        s2.n -= take; n -= take;
+        if (s2.n <= 0) {
+          arr[i] = null;
+          if (arr === inv.hotbar && i === inv.sel) { onEquip(null); inv.sel = -1; }
+        }
+      }
+    }
+    renderHotbar(); renderInv(); save();
+    return true;
+  }
+
   function toggle(open) {
     inv.open = open ?? !inv.open;
     invEl.classList.toggle('hidden', !inv.open);
@@ -248,5 +281,5 @@ export function initInventory({ me, onEquip, onWear, onDropItem, toast }) {
     if (el?.dataset?.bar !== undefined) select(+el.dataset.bar);
   });
 
-  return { add, select, useSelected, dropSelected, toggle, selectedItem, restore, state: inv };
+  return { add, select, useSelected, dropSelected, count, consume, toggle, selectedItem, restore, state: inv };
 }
