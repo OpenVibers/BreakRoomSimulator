@@ -1342,21 +1342,32 @@ function start(token, user) {
     pgState.lmb = false;
     if (pgState.held) physgunRelease();
   });
+  // gmod: right-click freezes the held prop right where it is. Under pointer
+  // lock the reliable signal is mousedown button 2 — the contextmenu event
+  // doesn't fire consistently while locked.
+  function freezeHeld() {
+    if (!pgEquipped() || !pgState.held || pgState.held.isCar) return;
+    const now2 = performance.now();
+    if (now2 - (freezeHeld._t || 0) < 150) return; // both events may arrive
+    freezeHeld._t = now2;
+    const held = pgState.held;
+    const b = held.body;
+    const fp = [+b.position.x.toFixed(2), +b.position.y.toFixed(2), +b.position.z.toFixed(2)];
+    const fq = [+b.quaternion.x.toFixed(3), +b.quaternion.y.toFixed(3), +b.quaternion.z.toFixed(3), +b.quaternion.w.toFixed(3)];
+    physgunRelease(false);
+    pgState.lmb = false; // fresh click required — no instant re-grab
+    phys.setFrozen(held, true);
+    net.send({ t: 'prop', op: 'freeze', id: held.id, frozen: true, p: fp, q: fq });
+    toast('🧊 Frozen in place — physgun-grab it to move it again.');
+    beep(1150, .07, 'sine', .1);
+  }
+  addEventListener('mousedown', (e) => {
+    if (e.button === 2 && input.locked) { e.preventDefault(); freezeHeld(); }
+  });
   addEventListener('contextmenu', (e) => {
     if (!input.locked) return;
-    e.preventDefault();
-    if (pgEquipped() && pgState.held && !pgState.held.isCar) { // gmod: right-click freezes it right there
-      const held = pgState.held;
-      const b = held.body;
-      const fp = [+b.position.x.toFixed(2), +b.position.y.toFixed(2), +b.position.z.toFixed(2)];
-      const fq = [+b.quaternion.x.toFixed(3), +b.quaternion.y.toFixed(3), +b.quaternion.z.toFixed(3), +b.quaternion.w.toFixed(3)];
-      physgunRelease(false);
-      pgState.lmb = false; // fresh click required — no instant re-grab
-      phys.setFrozen(held, true);
-      net.send({ t: 'prop', op: 'freeze', id: held.id, frozen: true, p: fp, q: fq });
-      toast('🧊 Frozen in place — physgun-grab it to move it again.');
-      beep(1150, .07, 'sine', .1);
-    }
+    e.preventDefault(); // no browser menu in-game; freeze fallback for odd setups
+    freezeHeld();
   });
 
   // beams: one for me, plus one per prop another player is holding
