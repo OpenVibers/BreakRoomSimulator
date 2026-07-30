@@ -292,6 +292,41 @@ export function initPhysics(scene) {
     claim(e);
     e.body.applyImpulse(V(0, Math.max(-40, vy * Math.min(e.body.mass, 6) * .55), 0));
   }
+  // ---- source-style movement clipping against FROZEN props ----
+  // The player is never displaced by static geometry — their movement is
+  // simply clipped, axis-separated, exactly like Source's player controller
+  // (which also hand-rolls player movement and leaves physics to the props).
+  function wallAt(x, z, feetY, r) {
+    for (const e of props.values()) {
+      if (!e.frozen) continue;
+      const b = e.body;
+      const bb = b.aabb;
+      if (x < bb.lowerBound.x - r || x > bb.upperBound.x + r ||
+          z < bb.lowerBound.z - r || z > bb.upperBound.z + r) continue;
+      if (bb.lowerBound.y > feetY + 1.7) continue;      // frozen shelf overhead
+      if (bb.upperBound.y - feetY <= STEP) continue;    // low enough to step on
+      // probe the capsule footprint: center + a ring on the radius. The rays
+      // skip bodies with collisionResponse=false, so fading doors stay passable.
+      for (let i = 0; i < 7; i++) {
+        const a = i * (Math.PI / 3);
+        const sx = i === 6 ? x : x + Math.cos(a) * r * .85;
+        const sz = i === 6 ? z : z + Math.sin(a) * r * .85;
+        const h = surfaceYAt(b, sx, sz);
+        if (h != null && h - feetY > STEP) return true;
+      }
+    }
+    return false;
+  }
+  function clipMove(px, pz, nx, nz, feetY, r = .34) {
+    if (nx === px && nz === pz) return [nx, nz];
+    if (wallAt(px, pz, feetY, r)) return [nx, nz]; // already inside: let them walk out
+    let x = nx;
+    if (wallAt(x, pz, feetY, r)) x = px;   // clip X
+    let z = nz;
+    if (wallAt(x, z, feetY, r)) z = pz;    // clip Z (with the clipped X)
+    return [x, z];
+  }
+
   // players are solid: shove the walking capsule out of dynamic props so a
   // physgunned crate PUSHES people instead of clipping through them
   function resolvePlayer(px, pz, py, r, exclude = null) {
@@ -451,14 +486,10 @@ export function initPhysics(scene) {
       b.velocity.setZero();
       b.angularVelocity.setZero();
       b.updateAABB();
-      if (!e.walkCol) { e.walkCol = { x0: 0, x1: 0, z0: 0, z1: 0, off: false }; W.colliders.push(e.walkCol); }
-      e.walkCol.x0 = b.aabb.lowerBound.x; e.walkCol.x1 = b.aabb.upperBound.x;
-      e.walkCol.z0 = b.aabb.lowerBound.z; e.walkCol.z1 = b.aabb.upperBound.z;
-      // don't block feet on things lying flat on the ground or floating overhead
-      e.walkCol.off = b.aabb.upperBound.y < .45 || b.aabb.lowerBound.y > 1.6;
-      // rotated pieces (ramps!): block only where the actual surface is too
-      // tall to step onto — the resolver probes this instead of the raw AABB
-      e.walkCol.hAt = (x, z) => surfaceYAt(b, x, z);
+      // no AABB walk collider for frozen props: a rotated shape's AABB is far
+      // bigger than the shape, and displacement-resolving against it teleport-
+      // shoved players. clipMove() traces the real geometry instead
+      // (source-style: player movement is clipped, never shoved).
       if (e.inter) { e.inter.x = b.position.x; e.inter.z = b.position.z; }
     } else {
       b.type = CANNON.Body.DYNAMIC;
@@ -733,7 +764,7 @@ export function initPhysics(scene) {
   return {
     world, props, cars, add, remove, claim, applyState, applyCarState, sendState, sendCarState,
     drive, step, smack, raycast, yawBody, rotateBody, setQuatAnchored, grabLocal, anchorWorld,
-    addStatic, removeStatic, setFrozen, addCar, groundAt, resolvePlayer, stomp, PHYS_KINDS,
+    addStatic, removeStatic, setFrozen, addCar, groundAt, resolvePlayer, clipMove, stomp, PHYS_KINDS,
     setMyId(id) { myId = id; },
   };
 }

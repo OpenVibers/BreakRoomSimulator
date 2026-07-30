@@ -2110,6 +2110,7 @@ function start(token, user) {
       W.feetY = my.y; // surface-probing colliders judge "climbable" from foot height
       [nx, nz] = resolveCollisions(nx, nz, .34);
       [nx, nz] = phys.resolvePlayer(nx, nz, my.y, .34, pgState.held); // props shove people
+      [nx, nz] = phys.clipMove(my.x, my.z, nx, nz, my.y); // frozen props: walk into them, just stop
       if (dt > 0) { my.vel.x = (nx - my.x) / dt; my.vel.z = (nz - my.z) / dt; } // wall clip
       my.x = nx; my.z = nz;
       const hsp = Math.hypot(my.vel.x, my.vel.z);
