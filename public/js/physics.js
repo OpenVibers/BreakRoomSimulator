@@ -124,6 +124,41 @@ export const PHYS_KINDS = {
       return g;
     },
   },
+  campfire: {
+    label: 'Campfire', icon: '🔥', mass: 6,
+    shape: () => new CANNON.Cylinder(.5, .5, .42, 8),
+    build() {
+      const g = new THREE.Group();
+      const logM = new THREE.MeshStandardMaterial({ color: 0x6a4a2c, roughness: .95 });
+      for (let i = 0; i < 3; i++) {
+        const log = new THREE.Mesh(new THREE.CylinderGeometry(.07, .08, .8, 7), logM);
+        log.rotation.z = Math.PI / 2 - .35;
+        log.rotation.y = i * Math.PI * 2 / 3;
+        log.position.y = -.05;
+        g.add(log);
+      }
+      const stoneM = new THREE.MeshStandardMaterial({ color: 0x7d7f83, roughness: 1 });
+      for (let i = 0; i < 7; i++) {
+        const a = i / 7 * Math.PI * 2;
+        const st = new THREE.Mesh(new THREE.SphereGeometry(.09, 6, 5), stoneM);
+        st.position.set(Math.cos(a) * .48, -.14, Math.sin(a) * .48);
+        st.scale.y = .7;
+        g.add(st);
+      }
+      const flame = new THREE.Mesh(
+        new THREE.ConeGeometry(.2, .55, 7),
+        new THREE.MeshBasicMaterial({ color: 0xff8a2a, transparent: true, opacity: .85, blending: THREE.AdditiveBlending, depthWrite: false }));
+      flame.position.y = .22;
+      const core = new THREE.Mesh(
+        new THREE.ConeGeometry(.1, .34, 6),
+        new THREE.MeshBasicMaterial({ color: 0xffe08a, transparent: true, opacity: .9, blending: THREE.AdditiveBlending, depthWrite: false }));
+      core.position.y = .16;
+      g.add(flame, core);
+      g.userData.flame = flame;
+      g.userData.flameCore = core;
+      return g;
+    },
+  },
   cone: {
     label: 'Traffic cone', icon: '🚧', mass: 1.4,
     shape: () => new CANNON.Cylinder(.05, .2, .55, 8),
@@ -179,7 +214,7 @@ export function initPhysics(scene) {
   world.addContactMaterial(new CANNON.ContactMaterial(propMat, carMat, { friction: .35, restitution: .3 }));
   let myId = null;
   const cars = new Map(); // id -> {id, car, body, isCar, owned, grabbedBy, remote, rp, rq, rv, remoteT}
-  for (const car of W.cars || []) {
+  function addCar(car) {
     // hitbox matched to the visual car (4.1×1.8 body, 1.3 roof): chassis box
     // plus a smaller cabin box on top so the shape rolls/stacks believably
     const hl = car.hl ?? (car.hl = 2.05), hw = car.hw ?? (car.hw = .9);
@@ -200,9 +235,75 @@ export function initPhysics(scene) {
     body.sleepTimeLimit = .6;
     body.sleep();
     world.addBody(body);
-    cars.set(car.id, { id: car.id, car, body, isCar: true, owned: false, grabbedBy: null, remote: false });
+    car.col.hAt = (x, z) => surfaceYAt(body, x, z); // roofs/hoods are climbable terrain
+    const e = { id: car.id, car, body, isCar: true, owned: false, grabbedBy: null, remote: false };
+    cars.set(car.id, e);
+    return e;
   }
+  for (const car of W.cars || []) addCar(car);
   const V = (x, y, z) => new CANNON.Vec3(x, y, z);
+
+  // ---- walkable surfaces: single-body downward raycast ----
+  // Used for standing on props/cars and for climbing rotated pieces (ramps):
+  // an AABB alone turns a tilted ramp into an invisible wall.
+  const wRay = new CANNON.Ray();
+  wRay.mode = CANNON.Ray.CLOSEST;
+  wRay.skipBackfaces = true;
+  const wRes = new CANNON.RaycastResult();
+  function surfaceYAt(body, x, z, fromY = null) {
+    body.updateAABB();
+    const top = body.aabb.upperBound.y;
+    wRay.from.set(x, fromY == null ? top + .6 : fromY, z);
+    wRay.to.set(x, body.aabb.lowerBound.y - .3, z);
+    wRes.reset();
+    wRay.intersectBody(body, wRes);
+    return wRes.hasHit ? wRes.hitPointWorld.y : null; // null: (x,z) misses the actual shape
+  }
+  const STEP = .68; // max walk-up height — one box, not one crate
+  // highest walkable surface under (x,z) reachable from foot height py
+  function groundAt(x, z, py) {
+    let g = 0;
+    const consider = (body) => {
+      body.updateAABB();
+      const bb = body.aabb;
+      if (x < bb.lowerBound.x - .05 || x > bb.upperBound.x + .05 ||
+          z < bb.lowerBound.z - .05 || z > bb.upperBound.z + .05) return;
+      if (bb.lowerBound.y > py + STEP + 1.2) return; // floating way overhead
+      const h = surfaceYAt(body, x, z);
+      if (h != null && h <= py + STEP && h > g) g = h;
+    };
+    for (const e of props.values()) consider(e.body);
+    for (const e of cars.values()) consider(e.body);
+    return g;
+  }
+  // players are solid: shove the walking capsule out of dynamic props so a
+  // physgunned crate PUSHES people instead of clipping through them
+  function resolvePlayer(px, pz, py, r, exclude = null) {
+    for (const e of props.values()) {
+      if (e === exclude || e.frozen) continue;
+      const bb = e.body.aabb;
+      if (bb.upperBound.y - py <= STEP) continue;      // low enough to step on
+      if (bb.lowerBound.y > py + 1.6) continue;        // floating overhead
+      const nx = Math.max(bb.lowerBound.x, Math.min(px, bb.upperBound.x));
+      const nz = Math.max(bb.lowerBound.z, Math.min(pz, bb.upperBound.z));
+      const dx = px - nx, dz = pz - nz;
+      const d2 = dx * dx + dz * dz;
+      if (d2 >= r * r) continue;
+      if (d2 < 1e-9) { // center inside: push out the nearest face
+        const pushes = [
+          [bb.lowerBound.x - r - px, 0], [bb.upperBound.x + r - px, 0],
+          [0, bb.lowerBound.z - r - pz], [0, bb.upperBound.z + r - pz],
+        ];
+        pushes.sort((a, b) => Math.abs(a[0] + a[1]) - Math.abs(b[0] + b[1]));
+        px += pushes[0][0]; pz += pushes[0][1];
+      } else {
+        const d = Math.sqrt(d2);
+        px = nx + dx / d * r;
+        pz = nz + dz / d * r;
+      }
+    }
+    return [px, pz];
+  }
 
   // arcade forces on a real chassis: engine + brake along the body's forward
   // axis, hard-set yaw rate for snappy steering, lateral-grip kill, and a
@@ -339,6 +440,9 @@ export function initPhysics(scene) {
       e.walkCol.z0 = b.aabb.lowerBound.z; e.walkCol.z1 = b.aabb.upperBound.z;
       // don't block feet on things lying flat on the ground or floating overhead
       e.walkCol.off = b.aabb.upperBound.y < .45 || b.aabb.lowerBound.y > 1.6;
+      // rotated pieces (ramps!): block only where the actual surface is too
+      // tall to step onto — the resolver probes this instead of the raw AABB
+      e.walkCol.hAt = (x, z) => surfaceYAt(b, x, z);
       if (e.inter) { e.inter.x = b.position.x; e.inter.z = b.position.z; }
     } else {
       b.type = CANNON.Body.DYNAMIC;
@@ -381,7 +485,9 @@ export function initPhysics(scene) {
   function playerPush(px, py, pz, dt) {
     for (const e of props.values()) {
       if (e.frozen) continue;
+      if (e.grabbedBy && e.grabbedBy !== myId) continue; // don't fight the holder's stream
       const b = e.body;
+      if (py > b.aabb.upperBound.y - .25) continue; // standing on it, not into it
       const dx = b.position.x - px, dz = b.position.z - pz;
       const d = Math.hypot(dx, dz);
       const rad = .34 + (e.kind === 'crate' ? .62 : .42);
@@ -536,6 +642,19 @@ export function initPhysics(scene) {
       b.position.set(aw.x - anchorTmp.x, aw.y - anchorTmp.y, aw.z - anchorTmp.z);
     } else yawQ.mult(b.quaternion, b.quaternion);
   }
+  // hard-set orientation while keeping the grab anchor pinned in world space —
+  // the physgun's view-relative grip drives this every frame
+  function setQuatAnchored(e, qx, qy, qz, qw, local = null) {
+    const b = e.body;
+    if (local) {
+      const aw = new CANNON.Vec3();
+      b.quaternion.vmult(local, anchorTmp);
+      aw.set(b.position.x + anchorTmp.x, b.position.y + anchorTmp.y, b.position.z + anchorTmp.z);
+      b.quaternion.set(qx, qy, qz, qw);
+      b.quaternion.vmult(local, anchorTmp);
+      b.position.set(aw.x - anchorTmp.x, aw.y - anchorTmp.y, aw.z - anchorTmp.z);
+    } else b.quaternion.set(qx, qy, qz, qw);
+  }
   function yawBody(e, dyaw, local = null) {
     const b = e.body;
     yawQ.setFromAxisAngle(V(0, 1, 0), dyaw);
@@ -564,7 +683,8 @@ export function initPhysics(scene) {
 
   return {
     world, props, cars, add, remove, claim, applyState, applyCarState, sendState, sendCarState,
-    drive, step, smack, raycast, yawBody, rotateBody, grabLocal, anchorWorld, addStatic, removeStatic, setFrozen, PHYS_KINDS,
+    drive, step, smack, raycast, yawBody, rotateBody, setQuatAnchored, grabLocal, anchorWorld,
+    addStatic, removeStatic, setFrozen, addCar, groundAt, resolvePlayer, PHYS_KINDS,
     setMyId(id) { myId = id; },
   };
 }

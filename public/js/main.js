@@ -1,6 +1,6 @@
 // Amazon Break Room Simulator — client bootstrap & game loop.
 import * as THREE from 'three';
-import { buildWorld, resolveCollisions, W } from './world.js';
+import { buildWorld, resolveCollisions, addWorldCar, W } from './world.js';
 import { makeAvatar, buildHeldMesh, SKINS, SHIRTS, HAIRS, HATS } from './avatar.js';
 import { initInventory, ITEMS } from './inventory.js';
 import { input, initInput, keyMove, uiFocus } from './input.js';
@@ -118,18 +118,51 @@ function start(token, user) {
   }
 
   // ---------- drivable cars (rigid-body vehicles — they roll and flip) ----------
-  const carState = { driving: null }; // driving = W.cars entry
+  const carState = { driving: null, riding: null }; // driving = W.cars entry · riding = {car, seat}
   let carSendT = 0;
+  // passenger seat offsets in car-local space (forward = +z): shotgun + two rear
+  const PAX_OFFS = [{ x: .62, z: .5 }, { x: -.55, z: -.95 }, { x: .55, z: -.95 }];
+  const myCarIds = new Set(); // personal cars I own (server-confirmed)
+  function carUsable(car) { return !car.ownerName || myCarIds.has(car.id) || car.ownerName === me.name; }
   function enterCar(car) {
-    if (car.driver && car.driver !== myId) { toast('🚗 Someone is already driving that one.'); return; }
+    if (car.driver && car.driver !== myId) { enterPassenger(car); return; }
+    // optimistic: take the wheel now; an owner-locked car comes back as 'deny'
+    prepDrive(car);
+    net.send({ t: 'car', id: car.id, op: 'enter' });
+    if (carUsable(car)) toast('🚗 W/S throttle · A/D steer · Space handbrake · E to get out');
+  }
+  function prepDrive(car) {
     const e = phys.cars.get(car.id);
     if (pgState.held === e) physgunRelease(false);
     carState.driving = car;
     car.col.off = true;
     car.driver = myId;
     phys.claim(e);
-    net.send({ t: 'car', id: car.id, op: 'enter' });
-    toast('🚗 W/S throttle · A/D steer · Space handbrake · E to get out');
+  }
+  function enterPassenger(car) {
+    car.pax = car.pax || {};
+    let seat = -1;
+    for (let s = 0; s < 3; s++) if (car.pax[s] == null) { seat = s; break; }
+    if (seat === -1) { toast('🚗 That car is full.'); return; }
+    net.send({ t: 'car', id: car.id, op: 'sit', seat }); // server confirms via broadcast
+  }
+  function ridePose() { // glue me to my passenger seat, in car-local space
+    const { car, seat } = carState.riding;
+    const e = phys.cars.get(car.id);
+    if (!e) { carState.riding = null; return; }
+    const off = PAX_OFFS[seat] || PAX_OFFS[0];
+    const fx = Math.sin(car.ry), fz = Math.cos(car.ry);
+    my.x = car.x + fx * off.z + fz * off.x;
+    my.z = car.z + fz * off.z - fx * off.x;
+    my.y = Math.max(0, e.body.position.y - .15);
+    my.ry = car.ry;
+  }
+  function exitPassengerLocal(car) {
+    carState.riding = null;
+    my.x = car.x + Math.cos(car.ry) * 1.7;
+    my.z = car.z - Math.sin(car.ry) * 1.7;
+    my.y = 0; my.vy = 0; my.vel.x = 0; my.vel.z = 0;
+    sendPos(true);
   }
   function exitCar() {
     const car = carState.driving;
@@ -147,7 +180,48 @@ function start(token, user) {
     net.send({ t: 'car', id: car.id, op: 'exit' });
     sendPos(true);
   }
+  function leaveAnyCar() { // death/desync: get out of whatever we're in, silently
+    if (carState.driving) {
+      const car = carState.driving;
+      carState.driving = null;
+      car.col.off = false;
+      car.driver = null;
+      const e = phys.cars.get(car.id);
+      if (e) e.owned = false;
+      net.send({ t: 'car', id: car.id, op: 'exit' });
+    }
+    if (carState.riding) {
+      const { car } = carState.riding;
+      carState.riding = null;
+      net.send({ t: 'car', id: car.id, op: 'unsit' });
+    }
+  }
+  // a crafted car arriving from the server (mine or someone else's)
+  function registerCar(id, c, snap = true) {
+    const car = addWorldCar({
+      id, color: c.color || 0x8a8f96,
+      x: Array.isArray(c.p) ? c.p[0] : 0, z: Array.isArray(c.p) ? c.p[2] : 0, ry: 0,
+      ownerName: c.ownerName || null,
+    });
+    car.pax = c.pax || {};
+    phys.addCar(car);
+    if (snap && Array.isArray(c.p)) phys.applyCarState({ id, p: c.p, q: c.q || [0, 0, 0, 1], v: null }, true);
+    return car;
+  }
   net.on('car', (m) => {
+    if (m.op === 'spawn') {
+      if (!W.cars?.some(c => c.id === m.id)) {
+        const car = registerCar(m.id, m.car);
+        if (m.owner === myId) {
+          myCarIds.add(m.id);
+          car.inter.label = 'Your car 🚗 — E to drive';
+          toast('🔧 Your car! Only you (and your friends) can drive it.', 5200);
+          beep(740, .12, 'sine', .12);
+        }
+      }
+      return;
+    }
+    if (m.op === 'spawnfail') { invApi.add('carkit'); return; }
     const car = W.cars?.find(c => c.id === m.id);
     const e = phys.cars.get(m.id);
     if (!car || !e) return;
@@ -160,6 +234,30 @@ function start(token, user) {
       car.driver = null;
       car.col.off = false;
       if (Array.isArray(m.p)) phys.applyCarState({ id: m.id, p: m.p, q: m.q, v: null }, true);
+    } else if (m.op === 'deny') { // server bounced us out (owner-locked car)
+      if (carState.driving === car) {
+        carState.driving = null;
+        car.col.off = false;
+        car.driver = null;
+        e.owned = false;
+        my.x = car.x + Math.cos(car.ry) * 1.7;
+        my.z = car.z - Math.sin(car.ry) * 1.7;
+        my.y = 0; my.vy = 0;
+        sendPos(true);
+        enterPassenger(car); // can't drive it, but riding shotgun is allowed
+      }
+      if (pgState.held === e) { physgunRelease(false); pgState.lmb = false; }
+    } else if (m.op === 'sit') {
+      car.pax = car.pax || {};
+      car.pax[m.seat] = m.by;
+      if (m.by === myId) {
+        carState.riding = { car, seat: m.seat };
+        my.seat = null;
+        toast('🚌 Riding along — E to hop out');
+      }
+    } else if (m.op === 'unsit') {
+      if (car.pax) delete car.pax[m.seat];
+      if (m.by === myId && carState.riding?.car === car) exitPassengerLocal(car);
     } else if (m.op === 'state') {
       if (m.driver === myId) return;
       car.driver = m.driver;
@@ -246,12 +344,21 @@ function start(token, user) {
   torch.position.set(.25, -.2, .1);
   torch.target.position.set(0, -.4, -12);
   camera.add(torch, torch.target);
-  // headlight pool (created up-front — stable light count, no shader hitches)
+  // headlight pool (created up-front — stable light count, no shader hitches).
+  // Wide cone + long throw so night driving actually lights the road.
   const hlPool = [];
   for (let i = 0; i < 2; i++) {
-    const sp = new THREE.SpotLight(0xfff2cf, 0, 36, .52, .5, 1.1);
+    const sp = new THREE.SpotLight(0xfff2cf, 0, 60, .78, .55, .9);
     scene.add(sp, sp.target);
     hlPool.push(sp);
+  }
+  // campfire light pool: the nearest few campfires share these flickering points
+  const cfPool = [];
+  for (let i = 0; i < 4; i++) {
+    const pl = new THREE.PointLight(0xff9a3a, 0, 16, 1.3);
+    scene.add(pl);
+    cfPool.push(pl);
+    (W.extraLights = W.extraLights || []).push(pl); // the graphics toggle covers them
   }
   let vmSwing = 0;
   // per-item viewmodel pose so props read correctly in first person (Bug10)
@@ -524,11 +631,16 @@ function start(token, user) {
     phys.setMyId(m.id);
     my.x = m.you.x; my.y = m.you.y; my.z = m.you.z; my.ry = m.you.ry;
     mg.applyInit(m);
+    for (const cid of m.myCarIds || []) myCarIds.add(cid);
     for (const [cid, c] of Object.entries(m.cars || {})) {
-      const car = W.cars?.find(k => k.id === cid);
+      let car = W.cars?.find(k => k.id === cid);
+      if (!car && cid.startsWith('pc')) car = registerCar(cid, c, false); // crafted cars aren't in the base map
       if (!car) continue;
       if (Array.isArray(c.p)) phys.applyCarState({ id: cid, p: c.p, q: c.q || [0, 0, 0, 1], v: null }, true);
       car.driver = c.driver;
+      car.pax = c.pax || {};
+      car.ownerName = c.ownerName || car.ownerName || null;
+      if (myCarIds.has(cid)) car.inter.label = 'Your car 🚗 — E to drive';
       if (c.driver) car.col.off = true;
     }
     me.admin = !!m.admin;
@@ -677,8 +789,42 @@ function start(token, user) {
     others.get(m.id)?.avatar.flash?.(); // victims glow red so everyone can tell
     if (m.by === myId) hitmarker(m.hs === true);
   });
+  // the big red YOU DIED card: who, with what, from how far, how long you lasted
+  const WEAPON_LABELS = {
+    fists: '👊 bare fists', paddle: '🏓 a ping pong paddle', broom: '🧹 a broom', tapegun: '📼 a tape gun',
+    tube: '📦 a cardboard tube', wrench: '🔧 a wrench', banana: '🍌 a banana (embarrassing)',
+    axe: '🪓 an axe', pickaxe: '⛏️ a pickaxe', stoneaxe: '🪓 a stone axe', stonepick: '⛏️ a stone pickaxe',
+    pistol: '🔫 a pistol', zombie: '🧟 zombie teeth',
+  };
+  const fmtLived = (s) => s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m` : s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+  function showDeathScreen(m) {
+    const el = $('death-screen');
+    $('ds-sub').innerHTML = m.hs
+      ? `<b>${esc(m.by)}</b> headshotted you with ${WEAPON_LABELS[m.weapon] || 'something'} 🎯`
+      : `taken out by <b>${esc(m.by)}</b>${m.weapon ? ` with ${WEAPON_LABELS[m.weapon] || 'something'}` : ''}`;
+    const rows = [];
+    if (Number.isFinite(m.dist)) rows.push(['📏 from', `${m.dist.toFixed(1)} m`]);
+    if (Number.isFinite(m.lived)) rows.push(['⏱️ you survived', fmtLived(m.lived)]);
+    rows.push(['💀 kills that life', String(m.kills || 0)]);
+    rows.push(['🎒 your stuff', 'scattered where you fell']);
+    $('ds-stats').innerHTML = rows.map(([k, v]) => `<div class="ds-row"><span>${k}</span><b>${v}</b></div>`).join('');
+    el.classList.remove('hidden');
+    requestAnimationFrame(() => el.classList.add('show'));
+    clearTimeout(showDeathScreen._t);
+    showDeathScreen._t = setTimeout(hideDeathScreen, 7000);
+    el.onclick = hideDeathScreen;
+  }
+  function hideDeathScreen() {
+    const el = $('death-screen');
+    el.classList.remove('show');
+    setTimeout(() => el.classList.add('hidden'), 600);
+  }
   net.on('died', (m) => {
     setHp(100, false);
+    leaveAnyCar(); // dying at the wheel used to respawn you "inside" the car
+    if (pgState.held) physgunRelease(false);
+    my.seat = null;
+    myAvatar.seatId = null;
     my.x = m.x; my.z = m.z; my.y = 0; my.vy = 0;
     my.vel.x = 0; my.vel.z = 0;
     my.held = null;
@@ -688,7 +834,7 @@ function start(token, user) {
     updateViewmodel();
     dmgFlash.style.opacity = .9;
     setTimeout(() => { dmgFlash.style.opacity = 0; }, 700);
-    toast(`💀 ${m.by} got you. Your stuff is scattered where you fell.`, 5600);
+    showDeathScreen(m);
     beep(90, .5, 'sawtooth', .18);
     sendPos(true);
   });
@@ -1058,6 +1204,15 @@ function start(token, user) {
     spawnProp(kind);
     toast(`${ITEMS[kind].icon} placed`);
   }
+  function placeCar() { // carkit: your own ride, owner-locked at the server
+    if (my.held !== 'carkit') return;
+    const mine = W.cars?.filter(c => myCarIds.has(c.id)).length || 0;
+    if (mine >= 3) { toast('🚗 Three personal cars is plenty.'); return; }
+    const used = invApi.dropSelected();
+    if (used !== 'carkit') return;
+    const fx = -Math.sin(my.yaw), fz = -Math.cos(my.yaw);
+    net.send({ t: 'car', op: 'spawn', x: +(my.x + fx * 4.2).toFixed(2), z: +(my.z + fz * 4.2).toFixed(2), ry: +my.yaw.toFixed(2) });
+  }
 
   // ---------- crafting (C) — rust-lite ----------
   const RECIPES = [
@@ -1075,6 +1230,8 @@ function start(token, user) {
     { id: 'barrel', cost: { stone: 6 }, desc: 'Physics prop' },
     { id: 'melon', cost: { wood: 3 }, desc: 'Physics prop, organic' },
     { id: 'cone', cost: { stone: 3 }, desc: 'Physics prop, official' },
+    { id: 'campfire', cost: { wood: 10, stone: 6 }, desc: 'Cozy light for the long nights' },
+    { id: 'carkit', cost: { wood: 90, stone: 60 }, desc: 'Your own car — only you & friends can drive it' },
   ];
   const craftEl = $('craft-menu'), craftList = $('craft-list'), craftHave = $('craft-have');
   let craftOpen = false;
@@ -1287,8 +1444,10 @@ function start(token, user) {
     if (fp) return camera.localToWorld(muzzleV.set(.31, -.26, -.75)); // viewmodel gun tip
     return myAvatar.heldAnchor.getWorldPosition(muzzleV);
   }
-  const pgState = { held: null, dist: 0, lmb: false, missT: 0 };
+  const pgState = { held: null, dist: 0, lmb: false, missT: 0, relQ: null };
   const pgRay = new THREE.Raycaster();
+  const pgQTmp = new THREE.Quaternion(), pgQTmp2 = new THREE.Quaternion();
+  const PG_X = new THREE.Vector3(1, 0, 0), PG_Y = new THREE.Vector3(0, 1, 0);
   function pgEquipped() { return my.held === 'physgun'; }
   function pgPick() {
     // fan of rays around the crosshair so edge clicks still land
@@ -1306,10 +1465,14 @@ function start(token, user) {
     if (!hit) return;
     if (hit.e.frozen) phys.setFrozen(hit.e, false); // thaw to move (server re-freezes on veto)
     pgState.held = hit.e;
-    pgState.lastYaw = my.yaw; // view-follow rotation baseline
-    // gmod grip: remember WHERE on the object you grabbed it
+    pgState.lastYaw = my.yaw; // view-follow rotation baseline (cars: yaw-only)
+    // gmod grip: remember WHERE on the object you grabbed it, and its
+    // orientation RELATIVE TO YOUR VIEW — it stays locked in your view frame
     pgState.anchor = phys.grabLocal(hit.e, hit.point.x, hit.point.y, hit.point.z);
     pgState.anchorOut = new hit.e.body.position.constructor();
+    const bq = hit.e.body.quaternion;
+    pgState.relQ = camera.quaternion.clone().invert()
+      .multiply(new THREE.Quaternion(bq.x, bq.y, bq.z, bq.w));
     pgState.dist = Math.max(1.6, Math.min(hit.e.isCar ? 16 : 12, hit.distance));
     hit.e.grabbedBy = myId;
     phys.claim(hit.e);
@@ -1336,6 +1499,7 @@ function start(token, user) {
     } else if (my.held === 'pistol') firePistol();
     else if (ITEMS[my.held]?.type === 'build') placeBuild();
     else if (ITEMS[my.held]?.type === 'prop') placeProp();
+    else if (ITEMS[my.held]?.type === 'car') placeCar();
   });
   addEventListener('mouseup', (e) => {
     if (e.button !== 0) return;
@@ -1708,7 +1872,12 @@ function start(token, user) {
     let label = null;
     if (my.seat) label = 'Stand up';
     else if (mg.myPongTable) label = 'Swing! (or walk away to quit)';
-    else if (nearest && nearest.type !== 'c4' && nearest.type !== 'chess') label = nearest.label;
+    else if (nearest?.type === 'car') { // live label: drive / ride along / locked
+      const car = W.cars?.find(c => c.id === nearest.data.car);
+      if (car?.driver && car.driver !== myId) label = 'Hop in — ride along 🚌';
+      else if (car && car.ownerName && !carUsable(car)) label = `🔒 ${car.ownerName}'s car — E rides shotgun`;
+      else label = nearest.label;
+    } else if (nearest && nearest.type !== 'c4' && nearest.type !== 'chess') label = nearest.label;
     else if (nearestSeat) label = nearestSeat.type === 'couch' ? 'Sit on the couch' : 'Take a seat';
     if (label) { promptEl.classList.remove('hidden'); promptText.textContent = label; }
     else promptEl.classList.add('hidden');
@@ -1718,6 +1887,7 @@ function start(token, user) {
   function doAction() {
     if (mg.inArcade()) return;
     if (carState.driving) { exitCar(); return; }
+    if (carState.riding) { net.send({ t: 'car', id: carState.riding.car.id, op: 'unsit' }); exitPassengerLocal(carState.riding.car); return; }
     if (my.seat) { standUp(); return; }
     if (mg.myPongTable) { mg.swing(); return; }
     if (nearest) {
@@ -1844,12 +2014,14 @@ function start(token, user) {
     requestAnimationFrame(frame);
     const dt = Math.min(clock.getDelta(), .05);
 
-    // physgun rotate mode: hold E while carrying — the mouse turns the OBJECT
-    if (pgState.held && input.keys.KeyE && !pgState.held.isCar) {
+    // physgun rotate mode: hold E while carrying — the mouse turns the OBJECT.
+    // Rotations are applied in VIEW space (screen axes), so "mouse right" always
+    // spins the prop the same way no matter where you're facing — gmod feel.
+    if (pgState.held && input.keys.KeyE && !pgState.held.isCar && pgState.relQ) {
       const rdx = input.lookDX * .005, rdy = input.lookDY * .005;
       input.lookDX = 0; input.lookDY = 0; // eaten: camera stays put
-      if (rdx) phys.yawBody(pgState.held, -rdx, pgState.anchor);
-      if (rdy) phys.rotateBody(pgState.held, Math.cos(my.yaw), 0, -Math.sin(my.yaw), -rdy, pgState.anchor);
+      if (rdx) pgState.relQ.premultiply(pgQTmp.setFromAxisAngle(PG_Y, -rdx));
+      if (rdy) pgState.relQ.premultiply(pgQTmp.setFromAxisAngle(PG_X, -rdy));
     }
     // look (sensitivity + optional inverted Y; FP allows full look up/down)
     my.lookVX = input.lookDX;
@@ -1871,7 +2043,7 @@ function start(token, user) {
     }
     if (input.jumpQueued) {
       input.jumpQueued = false;
-      if (carState.driving) { /* Space is the handbrake while driving */ }
+      if (carState.driving || carState.riding) { /* Space is the handbrake while driving */ }
       else if (mg.myPongTable && !my.seat) mg.swing();
       else if (my.onGround && !my.seat) { my.vy = my.crouch ? 4.2 : 5.4; my.onGround = false; my.crouch = false; beep(520, .04, 'sine', .05); }
       else if (my.seat) standUp();
@@ -1898,6 +2070,9 @@ function start(token, user) {
           v: [+b.velocity.x.toFixed(2), +b.velocity.y.toFixed(2), +b.velocity.z.toFixed(2)],
         });
       }
+    } else if (carState.riding) {
+      ridePose(); // passenger: glued to the seat, E hops out
+      my.anim = 'sit';
     } else if (my.seat) {
       if (mvLen > .4) standUp();
       my.anim = 'sit';
@@ -1928,7 +2103,9 @@ function start(token, user) {
         my.vel.x += wx * add; my.vel.z += wz * add;
       }
       let nx = my.x + my.vel.x * dt, nz = my.z + my.vel.z * dt;
+      W.feetY = my.y; // surface-probing colliders judge "climbable" from foot height
       [nx, nz] = resolveCollisions(nx, nz, .34);
+      [nx, nz] = phys.resolvePlayer(nx, nz, my.y, .34, pgState.held); // props shove people
       if (dt > 0) { my.vel.x = (nx - my.x) / dt; my.vel.z = (nz - my.z) / dt; } // wall clip
       my.x = nx; my.z = nz;
       const hsp = Math.hypot(my.vel.x, my.vel.z);
@@ -1942,13 +2119,16 @@ function start(token, user) {
       my.anim = !my.onGround ? (hsp > 5 ? 'run' : 'walk')
         : my.crouch ? (hsp > .5 ? 'crouchwalk' : 'crouch')
         : hsp > 5.2 ? 'run' : hsp > .5 ? 'walk' : 'idle';
-      // gravity
+      // gravity — against the walkable surface under our feet (props, ramps,
+      // car roofs), not just the world floor
+      const gY = phys.groundAt(my.x, my.z, my.y);
+      if (my.onGround && gY > my.y && gY - my.y <= .68) { my.y = gY; my.vy = 0; } // step/ramp up
       my.vy -= 16 * dt;
       my.y += my.vy * dt;
-      if (my.y <= 0) {
+      if (my.y <= gY + 1e-4 && my.vy <= 0) {
         if (!my.onGround && my.vy < -5) beep(140, .05, 'sine', .05); // landing thud
-        my.y = 0; my.vy = 0; my.onGround = true;
-      }
+        my.y = gY; my.vy = 0; my.onGround = true;
+      } else if (my.y > gY + .03) my.onGround = false;
       // walked away from pong table?
       if (mg.myPongTable) {
         // anchors from the rotated cafeteria group carry world coords in wx/wz
@@ -1974,11 +2154,18 @@ function start(token, user) {
         const vl = Math.hypot(vx3, vy3, vz3);
         if (vl > 22) { vx3 *= 22 / vl; vy3 *= 22 / vl; vz3 *= 22 / vl; }
         b.velocity.set(vx3, vy3, vz3);
-        // gmod grip: the object turns with your view and otherwise holds its pose
-        const dyaw = my.yaw - (pgState.lastYaw ?? my.yaw);
-        pgState.lastYaw = my.yaw;
         b.angularVelocity.set(0, 0, 0);
-        if (!input.keys.KeyE && Math.abs(dyaw) > 1e-4) phys.yawBody(held, dyaw, pgState.anchor); // view-follow (E = manual rotate instead)
+        if (held.isCar) {
+          // cars: yaw-only view-follow (full view-lock would pitch them absurdly)
+          const dyaw = my.yaw - (pgState.lastYaw ?? my.yaw);
+          pgState.lastYaw = my.yaw;
+          if (Math.abs(dyaw) > 1e-4) phys.yawBody(held, dyaw, pgState.anchor);
+        } else if (pgState.relQ) {
+          // gmod grip: the prop is rigid in your VIEW frame — turning or pitching
+          // your view carries it along, E+mouse edits the relative orientation
+          pgQTmp2.copy(camera.quaternion).multiply(pgState.relQ);
+          phys.setQuatAnchored(held, pgQTmp2.x, pgQTmp2.y, pgQTmp2.z, pgQTmp2.w, pgState.anchor);
+        }
       }
     }
     phys.step(dt, my);
@@ -1989,6 +2176,7 @@ function start(token, user) {
       my.y = Math.max(0, ce2.body.position.y - .15);
       my.ry = car.ry;
     }
+    if (carState.riding) ridePose(); // passengers re-sync too (no chop at speed)
 
     // avatar
     myAvatar.group.position.set(my.x, my.y + (myAvatar.bobY || 0), my.z);
@@ -2181,11 +2369,33 @@ function start(token, user) {
         if (hl2.parent !== e2.car.group) {
           e2.car.group.add(hl2, hl2.target);
           hl2.position.set(0, .85, 2.0);
-          hl2.target.position.set(0, .25, 15);
+          hl2.target.position.set(0, 0, 24);
         }
-        hl2.intensity = .25 + (1 - (W.dayFactor ?? 1)) * 3.4;
+        hl2.intensity = .6 + (1 - (W.dayFactor ?? 1)) * 9;
       }
       for (; hi < hlPool.length; hi++) hlPool[hi].intensity = 0;
+    }
+    // campfires: hand the pooled lights to the nearest ones, flame flicker
+    {
+      const fires = [];
+      for (const e2 of phys.props.values()) {
+        if (e2.kind !== 'campfire') continue;
+        const p2 = e2.body.interpolatedPosition;
+        fires.push([(p2.x - my.x) ** 2 + (p2.z - my.z) ** 2, e2]);
+      }
+      if (fires.length > 1) fires.sort((a, b) => a[0] - b[0]);
+      const tNow = performance.now() / 1000;
+      for (let i2 = 0; i2 < cfPool.length; i2++) {
+        const pl = cfPool[i2];
+        const fe = fires[i2]?.[1];
+        if (!fe) { pl.intensity = 0; continue; }
+        const p2 = fe.body.interpolatedPosition;
+        pl.position.set(p2.x, p2.y + .6, p2.z);
+        const flick = 1 + Math.sin(tNow * 11 + i2 * 2.1) * .1 + Math.sin(tNow * 27.7 + i2) * .06;
+        pl.intensity = (.9 + (1 - (W.dayFactor ?? 1)) * 1.6) * flick;
+        const fl = fe.mesh.userData?.flame;
+        if (fl) { fl.scale.set(1, 1 + Math.sin(tNow * 9.3 + i2) * .16, 1); fl.rotation.y = tNow * 1.7; }
+      }
     }
     // flashlight follows your view
     torch.intensity = my.held === 'flashlight' ? .5 + (1 - (W.dayFactor ?? 1)) * 3.6 : 0;
@@ -2213,6 +2423,8 @@ function start(token, user) {
     action: doAction, nearest: () => nearest?.id || nearestSeat?.id || null,
     spawnProp, physgunGrab, physgunRelease, pgState, pgPick, sleepers: sleeperMap, inv: invApi,
     drops: worldDrops, dropItem: dropItemInWorld, knockIt,
+    carState, myCarIds, enterCar, placeCar, doAction, net,
+    get myId() { return myId; },
   };
 
   addEventListener('wheel', (e) => {

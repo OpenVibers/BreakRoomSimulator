@@ -2422,31 +2422,13 @@ function exteriorEast(scene) {
   }
   stripes.count = si;
   scene.add(stripes);
-  const carCols = [0x8a8f96, 0x2e3f55, 0x7a2c2c, 0xd8d8d8, 0x1a1c1e, 0x4a6b52];
   W.cars = [];
   for (let i = 0; i < 10; i++) {
-    const g = new THREE.Group();
-    const cM = new THREE.MeshStandardMaterial({ color: carCols[i % carCols.length], roughness: .35, metalness: .5 });
-    g.add(box(1.8, .55, 4.1, cM, 0, .55, 0));
-    g.add(box(1.6, .5, 2.2, new THREE.MeshStandardMaterial({ color: 0x1c2126, roughness: .2, metalness: .3 }), 0, 1.05, -.2));
-    // headlights + taillights so driving at speed reads well
-    for (const s2 of [-1, 1]) {
-      g.add(box(.3, .12, .06, new THREE.MeshStandardMaterial({ color: 0xfff2cf, emissive: 0xfff2cf, emissiveIntensity: .5 }), s2 * .55, .62, 2.05));
-      g.add(box(.3, .1, .06, new THREE.MeshStandardMaterial({ color: 0xd93025, emissive: 0x8a1610, emissiveIntensity: .5 }), s2 * .55, .62, -2.05));
-    }
-    for (const [wx, wz] of [[-.85, 1.3], [.85, 1.3], [-.85, -1.3], [.85, -1.3]]) {
-      const wh = cyl(.32, .32, .22, M.blackMetal, wx, .32, wz); wh.rotation.z = Math.PI / 2; g.add(wh);
-    }
     const s = i % 2 ? 1 : -1;
-    g.position.set(101.4 + (i % 3) * 5.6, 0, s * (9 + Math.floor(i / 2) * 3.1));
-    g.rotation.y = Math.PI / 2;
-    scene.add(g);
-    const col = { x0: g.position.x - 2.1, x1: g.position.x + 2.1, z0: g.position.z - 1, z1: g.position.z + 1, off: false };
-    W.colliders.push(col);
-    const id = 'car' + i;
-    const it = { id, type: 'car', x: g.position.x, z: g.position.z, r: 3.4, label: 'Drive the car 🚗', data: { car: id } };
-    inter(it);
-    W.cars.push({ id, group: g, col, inter: it, driver: null, x: g.position.x, z: g.position.z, ry: Math.PI / 2 });
+    addWorldCar({
+      id: 'car' + i, color: CAR_COLORS[i % CAR_COLORS.length],
+      x: 101.4 + (i % 3) * 5.6, z: s * (9 + Math.floor(i / 2) * 3.1), ry: Math.PI / 2,
+    });
   }
   // flag pole + hydrant + food truck (from trips)
   const pole = cyl(.05, .07, 9, M.chrome, 94.5, 4.5, -10, 8);
@@ -2974,6 +2956,7 @@ function streets(scene) {
 }
 
 export function buildWorld(scene) {
+  W.scene = scene; // late spawns (crafted cars) need somewhere to land
   mats();
   scene.background = new THREE.Color(0xbcd2e2);
   scene.fog = new THREE.Fog(0xbcd2e2, 90, 260); // far enough to see down the streets
@@ -3031,10 +3014,50 @@ export function buildWorld(scene) {
   return W;
 }
 
+// sedan builder shared by the parking-lot fleet and player-crafted cars.
+// Returns the W.cars entry (caller registers the physics body via phys.addCar).
+export const CAR_COLORS = [0x8a8f96, 0x2e3f55, 0x7a2c2c, 0xd8d8d8, 0x1a1c1e, 0x4a6b52, 0xc9541e, 0x6a3f8f];
+export function addWorldCar({ id, color, x, z, ry, ownerName = null }) {
+  const scene = W.scene;
+  const g = new THREE.Group();
+  const cM = new THREE.MeshStandardMaterial({ color, roughness: .35, metalness: .5 });
+  g.add(box(1.8, .55, 4.1, cM, 0, .55, 0));
+  g.add(box(1.6, .5, 2.2, new THREE.MeshStandardMaterial({ color: 0x1c2126, roughness: .2, metalness: .3 }), 0, 1.05, -.2));
+  // headlights + taillights so driving at speed reads well
+  for (const s2 of [-1, 1]) {
+    g.add(box(.3, .12, .06, new THREE.MeshStandardMaterial({ color: 0xfff2cf, emissive: 0xfff2cf, emissiveIntensity: .5 }), s2 * .55, .62, 2.05));
+    g.add(box(.3, .1, .06, new THREE.MeshStandardMaterial({ color: 0xd93025, emissive: 0x8a1610, emissiveIntensity: .5 }), s2 * .55, .62, -2.05));
+  }
+  for (const [wx, wz] of [[-.85, 1.3], [.85, 1.3], [-.85, -1.3], [.85, -1.3]]) {
+    const wh = cyl(.32, .32, .22, M.blackMetal, wx, .32, wz); wh.rotation.z = Math.PI / 2; g.add(wh);
+  }
+  g.position.set(x, 0, z);
+  g.rotation.y = ry;
+  g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  scene.add(g);
+  const col = { x0: x - 2.1, x1: x + 2.1, z0: z - 1, z1: z + 1, off: false };
+  W.colliders.push(col);
+  const it = {
+    id, type: 'car', x, z, r: 3.4,
+    label: ownerName ? `${ownerName}'s car 🚗` : 'Drive the car 🚗', data: { car: id },
+  };
+  inter(it);
+  const car = { id, group: g, col, inter: it, driver: null, x, z, ry, ownerName, pax: {} };
+  W.cars.push(car);
+  return car;
+}
+
 // circle-vs-AABB collision resolve, returns corrected [x,z]
 export function resolveCollisions(x, z, r) {
   for (const c of W.colliders) {
     if (c.off) continue;
+    // surface-probing colliders (frozen props, cars): only block where the
+    // actual surface is too tall to step onto — tilted ramps stay walkable.
+    // Probe at the contact point on the box, not the player center.
+    if (c.hAt && x >= c.x0 - .34 && x <= c.x1 + .34 && z >= c.z0 - .34 && z <= c.z1 + .34) {
+      const h = c.hAt(Math.max(c.x0, Math.min(x, c.x1)), Math.max(c.z0, Math.min(z, c.z1)));
+      if (h == null || h - (W.feetY || 0) <= .68) continue;
+    }
     const nx = Math.max(c.x0, Math.min(x, c.x1));
     const nz = Math.max(c.z0, Math.min(z, c.z1));
     const dx = x - nx, dz = z - nz;

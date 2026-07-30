@@ -78,11 +78,11 @@ export function initLighting(scene, renderer, shadows = true) {
 
   const skyDay = new THREE.Color(0xbcd2e2);
   const skyDusk = new THREE.Color(0xe89a5e);
-  const skyNight = new THREE.Color(0x0b1322);
+  const skyNight = new THREE.Color(0x151f33);
   const sunWarm = new THREE.Color(0xff9a4a);
   const sunNoon = new THREE.Color(0xffeed8);
-  const hemiDay = new THREE.Color(0xf2f5f8), hemiNight = new THREE.Color(0x28344e);
-  const gndDay = new THREE.Color(0x54575c), gndNight = new THREE.Color(0x0e1218);
+  const hemiDay = new THREE.Color(0xf2f5f8), hemiNight = new THREE.Color(0x48597c);
+  const gndDay = new THREE.Color(0x54575c), gndNight = new THREE.Color(0x222a36);
   const sky = new THREE.Color();
   const smooth = (a, b, x) => { const k = Math.max(0, Math.min(1, (x - a) / (b - a))); return k * k * (3 - 2 * k); };
 
@@ -127,15 +127,15 @@ export function initLighting(scene, renderer, shadows = true) {
     sun.position.set(qx + Math.sin(az) * 80, Math.max(4, elev * 90), qz + Math.cos(az) * 40);
     sun.target.position.set(qx, 0, qz);
 
-    moon.intensity = .22 * (1 - d);
+    moon.intensity = .55 * (1 - d); // bright "movie moonlight" so night stays readable
     moon.position.set(px - Math.sin(az) * 70, Math.max(10, -elev * 80), pz - Math.cos(az) * 35);
     moon.target.position.set(px, 0, pz);
 
     const dl = Math.max(d, indoorK * .82); // indoor light floor: fluorescents
-    hemi.intensity = .3 + .75 * dl;
+    hemi.intensity = .48 + .57 * dl;
     hemi.color.copy(hemiNight).lerp(hemiDay, dl);
     hemi.groundColor.copy(gndNight).lerp(gndDay, dl);
-    amb.intensity = .08 + .16 * dl;
+    amb.intensity = .16 + .1 * dl;
 
     stars.material.opacity = (1 - d) * .95;
 

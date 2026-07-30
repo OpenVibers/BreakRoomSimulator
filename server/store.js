@@ -127,7 +127,7 @@ export function setAppearance(key, ap) {
 export const ITEM_IDS = ['chips','soda','candy','coffee','energy','water','food',
   'paddle','broom','tapegun','tube','wrench','banana','physgun','flashlight',
   'wood','stone','axe','pickaxe','stoneaxe','stonepick','pistol','wall','floor','door',
-  'box','crate','ball','barrel','melon','cone',
+  'box','crate','ball','barrel','melon','cone','campfire','carkit',
   'hat-cap','hat-beanie','hat-hardhat','vest-yellow','vest-orange','vest-green','vest-blue','vest-pink'];
 export function setInventory(key, inv, hotbar) {
   const u = users[key] || guests.get(key);

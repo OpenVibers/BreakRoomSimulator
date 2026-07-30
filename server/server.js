@@ -96,13 +96,22 @@ try { savedWorld = JSON.parse(fs.readFileSync(WORLD_FILE, 'utf8')); } catch {}
 const sleepers = new Map(Object.entries(savedWorld.sleepers || {})); // key -> {key,name,vest,ap,guest,x,y,z,ry,ts}
 const props = new Map(Object.entries(savedWorld.props || {}));       // id -> {id,kind,p:[x,y,z],q:[x,y,z,w]}
 for (const [cid, c] of Object.entries(savedWorld.cars || {})) {
-  if (!/^(car\d+|lambo)$/.test(cid)) continue;
+  if (!/^(car\d+|lambo|pc\d+)$/.test(cid)) continue;
   if (Array.isArray(c.p)) cars[cid] = { p: c.p, q: Array.isArray(c.q) ? c.q : [0, 0, 0, 1], driver: null };
   else if (Number.isFinite(c.x)) { // migrate pre-rigid-body saves {x,z,ry}
     const h = (c.ry || 0) / 2;
     cars[cid] = { p: [c.x, .55, c.z], q: [0, +Math.sin(h).toFixed(3), 0, +Math.cos(h).toFixed(3)], driver: null };
   }
+  if (cars[cid] && cid.startsWith('pc')) { // crafted personal cars keep their owner
+    cars[cid].owner = c.owner || null;
+    cars[cid].ownerName = c.ownerName || null;
+    cars[cid].color = c.color || null;
+  }
 }
+let nextCarId = Object.keys(cars).reduce((m, id) => id.startsWith('pc') ? Math.max(m, Number(id.slice(2)) || 0) : m, 0) + 1;
+// what clients get to see about a car: everything except the owner's account key
+const pubCar = (c) => ({ p: c.p, q: c.q, driver: c.driver, ownerName: c.ownerName || null, color: c.color || null, pax: c.pax || {} });
+const pubCars = () => Object.fromEntries(Object.entries(cars).map(([id, c]) => [id, pubCar(c)]));
 let nextPhysId = [...props.keys()].reduce((m, id) => Math.max(m, Number(String(id).slice(2)) || 0), 0) + 1;
 // legacy static builds become FROZEN props (darkrp-style: everything is a prop)
 for (const b of Object.values(savedWorld.builds || {})) {
@@ -162,13 +171,28 @@ for (const sig of ['SIGTERM', 'SIGINT']) {
 }
 
 // death: spill everything, reset, respawn at the walkway — used by pvp AND npcs
-function killPlayer(t, byName) {
+function killPlayer(t, byName, info = {}) {
   stats.kills++;
   worldDirty = true;
   spillInventory(t.key, t.x, t.z);
+  // pry them out of any car first — respawning "inside" a car stuck players
+  for (const [cid, c] of Object.entries(cars)) {
+    if (c.driver === t.id) { c.driver = null; broadcast({ t: 'car', id: cid, op: 'exit', p: c.p, q: c.q }); }
+    if (c.pax) for (const [seat, pid] of Object.entries(c.pax)) {
+      if (pid === t.id) { delete c.pax[seat]; broadcast({ t: 'car', id: cid, op: 'unsit', seat: +seat, by: t.id }); }
+    }
+  }
+  const lived = Math.max(0, Math.round((Date.now() - (t.bornAt || Date.now())) / 1000));
+  const kills = t.myKills || 0;
   t.hp = 100;
+  t.bornAt = Date.now();
+  t.myKills = 0;
   t.x = 105 + Math.random() * 3; t.y = 0; t.z = -1 + Math.random() * 2;
-  if (t.ws.readyState === 1) t.ws.send(JSON.stringify({ t: 'died', by: byName, x: t.x, z: t.z }));
+  if (t.ws.readyState === 1) t.ws.send(JSON.stringify({
+    t: 'died', by: byName, weapon: info.weapon || null,
+    dist: Number.isFinite(info.dist) ? +info.dist.toFixed(1) : null,
+    hs: info.hs === true, lived, kills, x: t.x, z: t.z,
+  }));
   broadcast({ t: 'hp', id: t.id, hp: 100 });
 }
 
@@ -230,7 +254,7 @@ setInterval(() => { // 5Hz herd-and-horde tick
         else if (Date.now() - n.atkT > 1200) {
           n.atkT = Date.now();
           best.hp = (best.hp ?? 100) - 8;
-          if (best.hp <= 0) { killPlayer(best, 'a zombie'); sys(`🧟 ${best.name} got eaten by a zombie`); }
+          if (best.hp <= 0) { killPlayer(best, 'a zombie', { weapon: 'zombie', dist: bd }); sys(`🧟 ${best.name} got eaten by a zombie`); }
           else broadcast({ t: 'hp', id: best.id, hp: best.hp, by: -1 });
         }
       }
@@ -284,7 +308,7 @@ wss.on('connection', (ws, req) => {
   const p = {
     id, key: user.key, name: user.name, vest: user.vest, admin: user.admin, ap: user.ap, guest: !!user.guest, ws,
     x: 105 + Math.random() * 3, y: 0, z: -1 + Math.random() * 2, ry: -Math.PI / 2,
-    anim: 'idle', seat: null, held: null, lastChat: 0, hp: 100,
+    anim: 'idle', seat: null, held: null, lastChat: 0, hp: 100, bornAt: Date.now(), myKills: 0,
   };
   // returning player: wake their napper and resume exactly where they dozed off
   const slept = sleepers.get(user.key);
@@ -306,11 +330,12 @@ wss.on('connection', (ws, req) => {
     drops: [...drops.values()],
     mapEdits,
     players: [...players.values()].filter(q => q.id !== id).map(pubState),
+    myCarIds: Object.entries(cars).filter(([, c]) => c.owner === user.key).map(([cid]) => cid),
     c4: { a: c4.a.state(), b: c4.b.state() },
     chess: chess.state(),
     pong: { a: pong.a.state(), b: pong.b.state() },
     highscores: store.getHighscores(),
-    cars,
+    cars: pubCars(),
     sleepers: [...sleepers.values()],
     props: [...props.values()],
     npcs: npcSnapshot(),
@@ -333,6 +358,9 @@ wss.on('connection', (ws, req) => {
     players.delete(id);
     for (const [cid, c] of Object.entries(cars)) {
       if (c.driver === id) { c.driver = null; broadcast({ t: 'car', id: cid, op: 'exit', p: c.p, q: c.q }); }
+      if (c.pax) for (const [seat, pid] of Object.entries(c.pax)) {
+        if (pid === id) { delete c.pax[seat]; broadcast({ t: 'car', id: cid, op: 'unsit', seat: +seat, by: id }); }
+      }
     }
     for (const g of [c4.a, c4.b]) { g.leave(p.key); broadcast({ t: 'c4', s: g.state() }); }
     chess.leave(p.key); broadcast({ t: 'chess', s: chess.state() });
@@ -454,9 +482,37 @@ function handle(p, m) {
       break;
     }
     case 'car': {
+      if (m.op === 'spawn') { // crafted personal car: owner-locked driver's seat
+        const now = Date.now();
+        if (now - (p.lastCarSpawn || 0) < 1000) return;
+        p.lastCarSpawn = now;
+        const fail = (text) => { if (p.ws.readyState === 1) { p.ws.send(JSON.stringify({ t: 'car', op: 'spawnfail' })); p.ws.send(JSON.stringify({ t: 'sys', text })); } };
+        const mine = Object.values(cars).filter(c2 => c2.owner === p.key).length;
+        const crafted = Object.keys(cars).filter(k => k.startsWith('pc')).length;
+        if (mine >= 3) { fail('🚗 Three personal cars is plenty — the lot has limits.'); return; }
+        if (crafted >= 30) { fail('🚗 The lot is full of crafted cars already.'); return; }
+        const x = clampX(+m.x || 0), z = clampZ(+m.z || 0), h = (+m.ry || 0) / 2;
+        const cid = 'pc' + nextCarId++;
+        cars[cid] = {
+          p: [x, .6, z], q: [0, +Math.sin(h).toFixed(3), 0, +Math.cos(h).toFixed(3)],
+          driver: null, owner: p.key, ownerName: p.name,
+          color: [0x8a8f96, 0x2e3f55, 0x7a2c2c, 0xd8d8d8, 0x4a6b52, 0xc9541e, 0x6a3f8f][Math.floor(Math.random() * 7)],
+          pax: {},
+        };
+        worldDirty = true;
+        broadcast({ t: 'car', op: 'spawn', id: cid, car: pubCar(cars[cid]), owner: p.id });
+        sys(`🔧 ${p.name} built their own car!`);
+        return;
+      }
       const id = String(m.id || '').slice(0, 12);
-      if (!/^(car\d+|lambo)$/.test(id)) return;
+      if (!/^(car\d+|lambo|pc\d+)$/.test(id)) return;
       const c = cars[id] || (cars[id] = { p: null, q: [0, 0, 0, 1], driver: null });
+      const canUse = () => !c.owner || c.owner === p.key || store.isFriend(c.owner, p.key);
+      const deny = (text) => {
+        if (p.ws.readyState !== 1) return;
+        p.ws.send(JSON.stringify({ t: 'car', op: 'deny', id }));
+        if (text) p.ws.send(JSON.stringify({ t: 'sys', text }));
+      };
       const readPose = () => { // full rigid-body pose: position + quaternion (+velocity)
         const pos = Array.isArray(m.p) ? m.p.map(Number) : null;
         const q = Array.isArray(m.q) ? m.q.map(Number) : null;
@@ -469,6 +525,7 @@ function handle(p, m) {
       const vel = () => Array.isArray(m.v) && m.v.length === 3 && m.v.every(Number.isFinite) ? m.v : null;
       if (m.op === 'enter') {
         if (c.driver && c.driver !== p.id) return;
+        if (!canUse()) { deny(`🔒 That's ${c.ownerName || 'someone'}'s car — only they (and their friends) can drive it. Hop in the back instead!`); return; }
         c.driver = p.id;
         stats.joyrides++;
         if (id === 'lambo') stats.lambo++;
@@ -479,16 +536,31 @@ function handle(p, m) {
         if (c.driver !== p.id) return;
         c.driver = null;
         broadcast({ t: 'car', id, op: 'exit', p: c.p, q: c.q });
+      } else if (m.op === 'sit') { // passenger seats: anyone can ride along
+        const seat = Math.floor(Number(m.seat));
+        if (![0, 1, 2].includes(seat)) return;
+        c.pax = c.pax || {};
+        if (c.pax[seat] && c.pax[seat] !== p.id) return; // taken
+        for (const [s2, pid] of Object.entries(c.pax)) if (pid === p.id) delete c.pax[s2];
+        c.pax[seat] = p.id;
+        broadcast({ t: 'car', id, op: 'sit', seat, by: p.id });
+      } else if (m.op === 'unsit') {
+        c.pax = c.pax || {};
+        for (const [s2, pid] of Object.entries(c.pax)) {
+          if (pid === p.id) { delete c.pax[s2]; broadcast({ t: 'car', id, op: 'unsit', seat: +s2, by: p.id }); }
+        }
       } else if (m.op === 'state') { // driver's stream
         if (c.driver !== p.id) return;
         if (!readPose()) return;
         broadcast({ t: 'car', id, op: 'state', p: c.p, q: c.q, v: vel(), driver: p.id }, p.id);
       } else if (m.op === 'phys') { // driverless nudge: physgun, shoves, rolling to a stop
         if (c.driver) return;
+        if (!canUse()) return; // personal cars only move for their owner & friends
         if (!readPose()) return;
         broadcast({ t: 'car', id, op: 'phys', p: c.p, q: c.q, v: vel(), owner: p.id }, p.id);
       } else if (m.op === 'grab' || m.op === 'drop') { // physgun beam relay
         if (m.op === 'grab' && c.driver) return;
+        if (m.op === 'grab' && !canUse()) { deny(`🔒 That car belongs to ${c.ownerName || 'someone else'}.`); return; }
         broadcast({ t: 'car', id, op: m.op, by: p.id }, p.id);
       }
       break;
@@ -499,7 +571,7 @@ function handle(p, m) {
         if (now - (p.lastSpawn || 0) < 250) return;
         p.lastSpawn = now;
         if (props.size >= 150) { if (p.ws.readyState === 1) p.ws.send(JSON.stringify({ t: 'sys', text: '📦 Prop limit reached (150) — grab some with the physgun and press X to clear them.' })); return; }
-        const KINDS = ['box', 'crate', 'ball', 'barrel', 'melon', 'cone', 'wall', 'floor', 'door'];
+        const KINDS = ['box', 'crate', 'ball', 'barrel', 'melon', 'cone', 'campfire', 'wall', 'floor', 'door'];
         if (!KINDS.includes(m.kind)) return;
         const pos = Array.isArray(m.p) ? m.p.map(Number) : [];
         if (pos.length !== 3 || !pos.every(Number.isFinite)) return;
@@ -676,7 +748,8 @@ function handle(p, m) {
         return;
       }
       // death: everything they carried spills where they fell, then respawn
-      killPlayer(t, p.name);
+      p.myKills = (p.myKills || 0) + 1;
+      killPlayer(t, p.name, { weapon, dist: Math.hypot(p.x - t.x, p.z - t.z), hs });
       sys(`💀 ${p.name} clocked ${t.name} with ${label} — their stuff hit the floor`);
       break;
     }

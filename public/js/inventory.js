@@ -36,6 +36,8 @@ export const ITEMS = {
   barrel:    { name: 'Barrel',      icon: '🛢️', type: 'prop' },
   melon:     { name: 'Watermelon',  icon: '🍉', type: 'prop' },
   cone:      { name: 'Traffic cone', icon: '🚧', type: 'prop' },
+  campfire:  { name: 'Campfire',    icon: '🔥', type: 'prop' },
+  carkit:    { name: 'Car kit',     icon: '🚗', type: 'car' },
   'hat-cap':     { name: 'Cap',      icon: '🧢', type: 'clothes', ap: { hat: 1 } },
   'hat-beanie':  { name: 'Beanie',   icon: '👒', type: 'clothes', ap: { hat: 2 } },
   'hat-hardhat': { name: 'Hard hat', icon: '⛑️', type: 'clothes', ap: { hat: 3 } },

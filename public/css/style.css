@@ -180,3 +180,20 @@ body.touch #hp-wrap { bottom: calc(174px + env(safe-area-inset-bottom)); }
 #friends-list .fr { background: rgba(53,224,255,.1); border: 1px solid rgba(53,224,255,.4); color: #9fe8ff; border-radius: 999px; padding: 3px 10px; font-size: .82rem; cursor: pointer; }
 #friends-list .fr:hover { background: rgba(226,38,45,.2); border-color: #e2262d; }
 #friend-name { background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.15); color: #dfe7f0; border-radius: 8px; padding: 6px 10px; font-family: inherit; }
+
+/* ---------- death screen ---------- */
+#death-screen { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(30,4,6,.55) 30%, rgba(12,2,3,.94) 100%);
+  opacity: 0; transition: opacity .6s ease; cursor: pointer; }
+#death-screen.show { opacity: 1; }
+#ds-inner { text-align: center; max-width: 440px; padding: 24px; transform: scale(.94); transition: transform .6s ease; }
+#death-screen.show #ds-inner { transform: scale(1); }
+#death-screen h1 { font-size: 64px; letter-spacing: .28em; margin: 0 0 14px; color: #e2262d;
+  text-shadow: 0 0 26px rgba(226,38,45,.65), 0 2px 0 #5c0a0e; font-weight: 900; }
+#ds-sub { color: #f2d9d9; font-size: 17px; margin-bottom: 18px; }
+#ds-sub b { color: #ffb2ac; }
+#ds-stats { display: flex; flex-direction: column; gap: 6px; margin: 0 auto 18px; max-width: 330px; }
+.ds-row { display: flex; justify-content: space-between; background: rgba(255,255,255,.05);
+  border: 1px solid rgba(226,38,45,.25); border-radius: 8px; padding: 7px 12px; font-size: 14px; color: #d8c2c2; }
+.ds-row b { color: #ffd9d5; }
+#ds-hint { color: #8a6b6b; font-size: 12.5px; font-style: italic; }
