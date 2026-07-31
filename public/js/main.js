@@ -2020,8 +2020,10 @@ function start(token, user) {
     if (pgState.held && input.keys.KeyE && !pgState.held.isCar && pgState.relQ) {
       const rdx = input.lookDX * .005, rdy = input.lookDY * .005;
       input.lookDX = 0; input.lookDY = 0; // eaten: camera stays put
-      if (rdx) pgState.relQ.premultiply(pgQTmp.setFromAxisAngle(PG_Y, -rdx));
-      if (rdy) pgState.relQ.premultiply(pgQTmp.setFromAxisAngle(PG_X, -rdy));
+      // mirrored on purpose: dragging the mouse "rolls" the prop toward the
+      // drag, like spinning a globe — the un-mirrored version felt backwards
+      if (rdx) pgState.relQ.premultiply(pgQTmp.setFromAxisAngle(PG_Y, rdx));
+      if (rdy) pgState.relQ.premultiply(pgQTmp.setFromAxisAngle(PG_X, rdy));
     }
     // look (sensitivity + optional inverted Y; FP allows full look up/down)
     my.lookVX = input.lookDX;
