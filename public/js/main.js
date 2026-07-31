@@ -2178,7 +2178,8 @@ function start(token, user) {
       const stepH = my.onGround ? .5 : .12;
       [nx, nz] = resolveCollisions(nx, nz, .34);
       [nx, nz] = phys.resolvePlayer(nx, nz, my.y, .34, pgState.held, stepH); // props shove people
-      [nx, nz] = phys.clipMove(my.x, my.z, nx, nz, my.y, .34, stepH); // frozen props: walk into them, just stop
+      [nx, nz] = phys.clipMove(my.x, my.z, nx, nz, my.y, .34, stepH); // frozen props + cars: walk into them, just stop
+      [nx, nz] = phys.carResolve(nx, nz, my.y, .34, stepH); // a rolling car shoves you (smoothly)
       if (dt > 0) { my.vel.x = (nx - my.x) / dt; my.vel.z = (nz - my.z) / dt; } // wall clip
       my.x = nx; my.z = nz;
       const hsp = Math.hypot(my.vel.x, my.vel.z);

@@ -242,7 +242,11 @@ export function initPhysics(scene) {
     body.sleepTimeLimit = .6;
     body.sleep();
     world.addBody(body);
-    car.col.hAt = (x, z) => surfaceYAt(body, x, z); // roofs/hoods are climbable terrain
+    // cars do NOT use the AABB walk-collider (a rotated car's AABB expelled
+    // players in multi-meter snaps — "sent flying"). Players clip against the
+    // real chassis via blockDepth/carResolve instead.
+    { const ci = W.colliders.indexOf(car.col); if (ci !== -1) W.colliders.splice(ci, 1); }
+    car.col.off = true;
     const e = { id: car.id, car, body, isCar: true, owned: false, grabbedBy: null, remote: false };
     cars.set(car.id, e);
     return e;
@@ -267,6 +271,33 @@ export function initPhysics(scene) {
     return wRes.hasHit ? wRes.hitPointWorld.y : null; // null: (x,z) misses the actual shape
   }
   const STEP = .5; // max walk-up height (~source 18u): stairs/ramps yes, boxes no — jump those
+  // closest point on any of a body's BOX shapes to world point (x, hy, z) —
+  // exact for compound bodies (car chassis + cabin); null if no box shapes
+  const bcConj = new CANNON.Quaternion();
+  const bcLocal = new CANNON.Vec3();
+  const bcOut = new CANNON.Vec3();
+  function bodyClosestXZ(b, x, hy, z) {
+    let best = null, bestD2 = Infinity;
+    b.quaternion.conjugate(bcConj);
+    for (let si = 0; si < b.shapes.length; si++) {
+      const sh = b.shapes[si];
+      if (!sh.halfExtents) continue;
+      const so = b.shapeOffsets[si];
+      bcLocal.set(x - b.position.x, hy - b.position.y, z - b.position.z);
+      bcConj.vmult(bcLocal, bcLocal);
+      bcLocal.vsub(so, bcLocal);
+      const he = sh.halfExtents;
+      bcOut.set(
+        Math.max(-he.x, Math.min(he.x, bcLocal.x)) + so.x,
+        Math.max(-he.y, Math.min(he.y, bcLocal.y)) + so.y,
+        Math.max(-he.z, Math.min(he.z, bcLocal.z)) + so.z);
+      b.quaternion.vmult(bcOut, bcOut);
+      const wx = bcOut.x + b.position.x, wy = bcOut.y + b.position.y, wz = bcOut.z + b.position.z;
+      const d2 = (wx - x) ** 2 + (wy - hy) ** 2 + (wz - z) ** 2;
+      if (d2 < bestD2) { bestD2 = d2; best = { x: wx, y: wy, z: wz }; }
+    }
+    return best;
+  }
   // highest walkable surface under (x,z) reachable from foot height py.
   // Returns {y, e}: e is the entity you'd be standing on (null = world floor),
   // so the walker can ride moving props like source-engine platforms.
@@ -275,10 +306,23 @@ export function initPhysics(scene) {
     const consider = (body, e) => {
       body.updateAABB();
       const bb = body.aabb;
-      if (x < bb.lowerBound.x - .05 || x > bb.upperBound.x + .05 ||
-          z < bb.lowerBound.z - .05 || z > bb.upperBound.z + .05) return;
+      // margin = the capsule rim: footprint support must SEE bodies the
+      // center ray misses (standing on a thin wall's .22m top edge)
+      if (x < bb.lowerBound.x - .3 || x > bb.upperBound.x + .3 ||
+          z < bb.lowerBound.z - .3 || z > bb.upperBound.z + .3) return;
       if (bb.lowerBound.y > py + STEP + 1.2) return; // floating way overhead
-      const h = surfaceYAt(body, x, z);
+      let h = surfaceYAt(body, x, z);
+      if (h == null) {
+        // footprint support: the center ray misses thin tops (a .22m wall
+        // edge) even when the capsule rim is over them — probe just inside
+        // the body's closest point instead of giving up (Bug: half the
+        // landings fell straight through the top of a thin wall)
+        const cp = bodyClosestXZ(body, x, py + .6, z);
+        if (cp) {
+          const cd = Math.hypot(cp.x - x, cp.z - z);
+          if (cd > 1e-4 && cd <= .27) h = surfaceYAt(body, cp.x + (cp.x - x) / cd * .04, cp.z + (cp.z - z) / cd * .04);
+        }
+      }
       if (h == null || h > py + STEP || h <= g) return;
       // approached from BELOW while airborne? if a downward-facing surface
       // sits well above our feet, we're UNDER the piece — its top is not our
@@ -351,34 +395,75 @@ export function initPhysics(scene) {
           z < bb.lowerBound.z - r || z > bb.upperBound.z + r) continue;
       if (bb.lowerBound.y > feetY + 1.7) continue;      // frozen shelf overhead
       if (bb.upperBound.y - feetY <= stepH) continue;   // low enough to step on
-      const shape = b.shapes[0];
-      if (shape?.halfExtents) {
-        // closest point on the oriented box to the player axis, sampled at a
-        // few torso heights — exact in the horizontal plane, so thin edges
-        // block just as hard as broad faces
-        const he = shape.halfExtents;
-        b.quaternion.conjugate(bdConj);
-        for (const hy of [feetY + STEP + .06, feetY + .95, feetY + 1.55]) {
-          bdLocal.set(x - b.position.x, hy - b.position.y, z - b.position.z);
-          bdConj.vmult(bdLocal, bdLocal);
-          bdClosest.set(
-            Math.max(-he.x, Math.min(he.x, bdLocal.x)),
-            Math.max(-he.y, Math.min(he.y, bdLocal.y)),
-            Math.max(-he.z, Math.min(he.z, bdLocal.z)));
-          b.quaternion.vmult(bdClosest, bdClosest);
-          const wy = bdClosest.y + b.position.y - feetY;
-          if (wy <= stepH || wy > 1.7) continue; // touching only a climbable/overhead part
-          const hd = Math.hypot(bdClosest.x + b.position.x - x, bdClosest.z + b.position.z - z);
-          if (r - hd > depth) depth = r - hd;
-        }
+      if (b.shapes.some(sh => sh.halfExtents)) {
+        const d = boxBodyDepth(b, x, z, feetY, r, stepH);
+        if (d > depth) depth = d;
       } else {
         // cylinders/cones: conservative bounding-radius disc
-        const rad = (shape?.boundingSphereRadius || .4) * .8;
+        const rad = (b.shapes[0]?.boundingSphereRadius || .4) * .8;
         const hd = Math.hypot(b.position.x - x, b.position.z - z) - rad;
         if (r - hd > depth) depth = r - hd;
       }
     }
+    // cars block by their REAL chassis too (the old AABB collider is gone)
+    for (const e of cars.values()) {
+      const b = e.body;
+      b.updateAABB();
+      const bb = b.aabb;
+      if (x < bb.lowerBound.x - r || x > bb.upperBound.x + r ||
+          z < bb.lowerBound.z - r || z > bb.upperBound.z + r) continue;
+      if (bb.lowerBound.y > feetY + 1.7 || bb.upperBound.y - feetY <= stepH) continue;
+      const d = boxBodyDepth(b, x, z, feetY, r, stepH);
+      if (d > depth) depth = d;
+    }
     return depth;
+  }
+  // deepest contact between the player capsule and a body's box shapes,
+  // sampled at torso heights — exact in the horizontal plane, so thin edges
+  // block just as hard as broad faces
+  function boxBodyDepth(b, x, z, feetY, r, stepH) {
+    let depth = 0;
+    for (const hy of [feetY + stepH + .06, feetY + .95, feetY + 1.55]) {
+      const cp = bodyClosestXZ(b, x, hy, z);
+      if (!cp) continue;
+      const wy = cp.y - feetY;
+      if (wy <= stepH || wy > 1.7) continue; // touching only a climbable/overhead part
+      const hd = Math.hypot(cp.x - x, cp.z - z);
+      if (r - hd > depth) depth = r - hd;
+    }
+    return depth;
+  }
+  // moving cars push players out smoothly — capped per frame, never a snap
+  function carResolve(px, pz, py, r = .34, stepH = STEP) {
+    for (const e of cars.values()) {
+      const b = e.body;
+      const bb = b.aabb;
+      if (px < bb.lowerBound.x - r || px > bb.upperBound.x + r ||
+          pz < bb.lowerBound.z - r || pz > bb.upperBound.z + r) continue;
+      if (bb.lowerBound.y > py + 1.7 || bb.upperBound.y - py <= stepH) continue;
+      let pen = 0, nx2 = 0, nz2 = 0;
+      for (const hy of [py + stepH + .06, py + .95, py + 1.55]) {
+        const cp = bodyClosestXZ(b, px, hy, pz);
+        if (!cp) continue;
+        const wy = cp.y - py;
+        if (wy <= stepH || wy > 1.7) continue;
+        const dx = px - cp.x, dz = pz - cp.z;
+        const d = Math.hypot(dx, dz);
+        if (r - d > pen) {
+          pen = r - d;
+          if (d > .01) { nx2 = dx / d; nz2 = dz / d; }
+          else {
+            const cd = Math.hypot(px - b.position.x, pz - b.position.z) || 1;
+            nx2 = (px - b.position.x) / cd; nz2 = (pz - b.position.z) / cd;
+          }
+        }
+      }
+      if (pen > 0) {
+        const push = Math.min(pen, .22); // firm shove out of a rolling car, never a teleport
+        px += nx2 * push; pz += nz2 * push;
+      }
+    }
+    return [px, pz];
   }
   function clipMove(px, pz, nx, nz, feetY, r = .34, stepH = STEP) {
     if (nx === px && nz === pz) return [nx, nz];
@@ -832,7 +917,7 @@ export function initPhysics(scene) {
   return {
     world, props, cars, add, remove, claim, applyState, applyCarState, sendState, sendCarState,
     drive, step, smack, raycast, yawBody, rotateBody, setQuatAnchored, grabLocal, anchorWorld,
-    addStatic, removeStatic, setFrozen, addCar, groundAt, ceilingAt, resolvePlayer, clipMove, stomp, PHYS_KINDS,
+    addStatic, removeStatic, setFrozen, addCar, groundAt, ceilingAt, resolvePlayer, clipMove, carResolve, stomp, PHYS_KINDS,
     setMyId(id) { myId = id; },
   };
 }
