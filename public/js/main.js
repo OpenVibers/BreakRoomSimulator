@@ -120,8 +120,17 @@ function start(token, user) {
   // ---------- drivable cars (rigid-body vehicles — they roll and flip) ----------
   const carState = { driving: null, riding: null }; // driving = W.cars entry · riding = {car, seat}
   let carSendT = 0;
-  // passenger seat offsets in car-local space (forward = +z): shotgun + two rear
-  const PAX_OFFS = [{ x: .62, z: .5 }, { x: -.55, z: -.95 }, { x: .55, z: -.95 }];
+  // seat offsets in car-local space (forward = +z, cabin centered ~z -0.2):
+  // driver front-left, then passengers: shotgun + two rear
+  const DRIVER_OFF = { x: -.52, z: .35 };
+  const PAX_OFFS = [{ x: .52, z: .35 }, { x: -.52, z: -.85 }, { x: .52, z: -.85 }];
+  function seatPose(car, e, off) { // sit AT the seat, not the car's center
+    const fx = Math.sin(car.ry), fz = Math.cos(car.ry);
+    my.x = car.x + fx * off.z + fz * off.x;
+    my.z = car.z + fz * off.z - fx * off.x;
+    my.y = Math.max(0, e.body.position.y - .15);
+    my.ry = car.ry;
+  }
   const myCarIds = new Set(); // personal cars I own (server-confirmed)
   function carUsable(car) { return !car.ownerName || myCarIds.has(car.id) || car.ownerName === me.name; }
   function enterCar(car) {
@@ -150,12 +159,7 @@ function start(token, user) {
     const { car, seat } = carState.riding;
     const e = phys.cars.get(car.id);
     if (!e) { carState.riding = null; return; }
-    const off = PAX_OFFS[seat] || PAX_OFFS[0];
-    const fx = Math.sin(car.ry), fz = Math.cos(car.ry);
-    my.x = car.x + fx * off.z + fz * off.x;
-    my.z = car.z + fz * off.z - fx * off.x;
-    my.y = Math.max(0, e.body.position.y - .15);
-    my.ry = car.ry;
+    seatPose(car, e, PAX_OFFS[seat] || PAX_OFFS[0]);
   }
   function exitPassengerLocal(car) {
     carState.riding = null;
@@ -2117,10 +2121,8 @@ function start(token, user) {
       const car = carState.driving;
       const e = phys.cars.get(car.id);
       phys.drive(e, -kv.y, -kv.x, !!input.keys.Space, dt);
-      // ride the chassis (car.x/z/ry are synced from the body in phys.step)
-      my.x = car.x; my.z = car.z;
-      my.y = Math.max(0, e.body.position.y - .15);
-      my.ry = car.ry;
+      // ride the chassis IN THE DRIVER'S SEAT (car.x/z/ry sync from the body)
+      seatPose(car, e, DRIVER_OFF);
       my.anim = 'sit';
       carSendT += dt;
       if (carSendT > .1) {
@@ -2264,9 +2266,7 @@ function start(token, user) {
     if (carState.driving) { // re-sync the seat to the freshly stepped chassis
       const car = carState.driving;
       const ce2 = phys.cars.get(car.id);
-      my.x = car.x; my.z = car.z;
-      my.y = Math.max(0, ce2.body.position.y - .15);
-      my.ry = car.ry;
+      if (ce2) seatPose(car, ce2, DRIVER_OFF);
     }
     if (carState.riding) ridePose(); // passengers re-sync too (no chop at speed)
 
