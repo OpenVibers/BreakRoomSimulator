@@ -2473,20 +2473,24 @@ function exteriorEast(scene) {
   const facadeM = new THREE.MeshStandardMaterial({ color: 0xe6e8e9, roughness: .9 });
   const greigeM = new THREE.MeshStandardMaterial({ color: 0xb3aca0, roughness: .9 });
   const grayM = new THREE.MeshStandardMaterial({ color: 0xb6bcc1, roughness: .9 });
+  // Facade layering (Bug56/57): every trim piece sits PROUD of the wall plane
+  // it decorates — flush/buried panels z-fought as big hatched patches.
+  // Planes: band face 92.60 · wing faces 92.62 · trim fronts 92.66.
   // greige feature band above the storefront carries the smile
   scene.add(box(.5, 7.2, 34.4, greigeM, 92.35, 9.8, 0));
   // textured pilaster strips flanking the smile (vertical scratter panels)
-  for (const pz of [-8.5, 8.5]) scene.add(box(.56, 7, 1.6, new THREE.MeshStandardMaterial({ color: 0x8f8b84, roughness: .95 }), 92.3, 9.7, pz));
-  // side wings — the building continues far north/south
+  for (const pz of [-8.5, 8.5]) scene.add(box(.56, 7, 1.6, new THREE.MeshStandardMaterial({ color: 0x8f8b84, roughness: .95 }), 92.38, 9.7, pz));
+  // side wings — the building continues far north/south (.02 proud of the band
+  // so their z≈±17 overlap never shares a plane with it)
   for (const s of [-1, 1]) {
-    scene.add(box(.5, 13.4, 24, facadeM, 92.35, 6.7, s * 29));
-    collide(92.35, s * 29, .8, 24);
+    scene.add(box(.5, 13.4, 24, facadeM, 92.37, 6.7, s * 29));
+    collide(92.37, s * 29, .8, 24);
     // gray panel accents + louvers
-    scene.add(box(.56, 5, 6, grayM, 92.32, 3.4, s * 24));
-    scene.add(box(.56, 2.6, 4, new THREE.MeshStandardMaterial({ color: 0x4a5157, roughness: .9 }), 92.3, 10.6, s * 27));
+    scene.add(box(.56, 5, 6, grayM, 92.38, 3.4, s * 24));
+    scene.add(box(.56, 2.6, 4, new THREE.MeshStandardMaterial({ color: 0x4a5157, roughness: .9 }), 92.38, 10.6, s * 27));
   }
   // blue roofline stripe across everything
-  scene.add(box(.56, .8, 82, new THREE.MeshStandardMaterial({ color: 0x2a7de1, roughness: .7 }), 92.3, 13.1, 0));
+  scene.add(box(.56, .8, 82, new THREE.MeshStandardMaterial({ color: 0x2a7de1, roughness: .7 }), 92.38, 13.1, 0));
   // center tower (gray) with a second blue stripe like the real tower
   scene.add(box(3.5, 5.2, 15, grayM, 93.8, 15.5, 0));
   scene.add(box(3.56, .55, 15.1, new THREE.MeshStandardMaterial({ color: 0x2a7de1, roughness: .7 }), 93.8, 14.6, 0));
@@ -2497,7 +2501,7 @@ function exteriorEast(scene) {
     g.beginPath(); g.moveTo(w - 120, 70); g.lineTo(w - 68, 104); g.lineTo(w - 130, 140); g.stroke();
   });
   const smile = new THREE.Mesh(new THREE.PlaneGeometry(7, 3.5), new THREE.MeshBasicMaterial({ map: smileTex2, transparent: true }));
-  smile.rotation.y = -Math.PI / 2; smile.position.set(92.0, 10.6, 0);
+  smile.rotation.y = Math.PI / 2; smile.position.set(92.63, 10.6, 0); // was buried INSIDE the band (and facing into it)
   scene.add(smile);
   // the sweeping tall blue canopy fascia across the whole entrance, with the
   // dark-navy "main entry" panel at its end (FrontEnterance.jpg)
