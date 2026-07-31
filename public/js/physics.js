@@ -270,7 +270,7 @@ export function initPhysics(scene) {
   // highest walkable surface under (x,z) reachable from foot height py.
   // Returns {y, e}: e is the entity you'd be standing on (null = world floor),
   // so the walker can ride moving props like source-engine platforms.
-  function groundAt(x, z, py) {
+  function groundAt(x, z, py, airborne = false) {
     let g = 0, ge = null;
     const consider = (body, e) => {
       body.updateAABB();
@@ -279,11 +279,46 @@ export function initPhysics(scene) {
           z < bb.lowerBound.z - .05 || z > bb.upperBound.z + .05) return;
       if (bb.lowerBound.y > py + STEP + 1.2) return; // floating way overhead
       const h = surfaceYAt(body, x, z);
-      if (h != null && h <= py + STEP && h > g) { g = h; ge = e; }
+      if (h == null || h > py + STEP || h <= g) return;
+      // approached from BELOW while airborne? if a downward-facing surface
+      // sits well above our feet, we're UNDER the piece — its top is not our
+      // ground (jumping beneath a thin slab used to warp you through onto it).
+      // Grounded step-ups skip this: the ceiling clamp already makes the
+      // grounded warp geometrically impossible, and thin ledges must step.
+      if (airborne && h - py > .3) {
+        wRay.from.set(x, py + .03, z);
+        wRay.to.set(x, h - .02, z);
+        wRes.reset();
+        wRay.intersectBody(body, wRes);
+        if (wRes.hasHit && wRes.hitPointWorld.y - py > .28) return;
+      }
+      g = h; ge = e;
     };
     for (const e of props.values()) consider(e.body, e);
     for (const e of cars.values()) consider(e.body, e);
     return { y: g, e: ge };
+  }
+  // lowest overhead surface (an underside) above the feet at (x,z), or null —
+  // source-style head collision: jumps BONK instead of clipping into geometry
+  function ceilingAt(x, z, feetY) {
+    let c = null;
+    const consider = (e) => {
+      const b = e.body;
+      if (!b.collisionResponse) return; // fading door
+      b.updateAABB();
+      const bb = b.aabb;
+      if (x < bb.lowerBound.x - .05 || x > bb.upperBound.x + .05 ||
+          z < bb.lowerBound.z - .05 || z > bb.upperBound.z + .05) return;
+      if (bb.upperBound.y <= feetY + .25 || bb.lowerBound.y > feetY + 2.5) return;
+      wRay.from.set(x, feetY + .25, z);
+      wRay.to.set(x, feetY + 2.5, z);
+      wRes.reset();
+      wRay.intersectBody(b, wRes);
+      if (wRes.hasHit && (c == null || wRes.hitPointWorld.y < c)) c = wRes.hitPointWorld.y;
+    };
+    for (const e of props.values()) consider(e);
+    for (const e of cars.values()) consider(e);
+    return c;
   }
   // landing on a physics prop presses it down — the source-engine thud
   function stomp(e, vy) {
@@ -793,7 +828,7 @@ export function initPhysics(scene) {
   return {
     world, props, cars, add, remove, claim, applyState, applyCarState, sendState, sendCarState,
     drive, step, smack, raycast, yawBody, rotateBody, setQuatAnchored, grabLocal, anchorWorld,
-    addStatic, removeStatic, setFrozen, addCar, groundAt, resolvePlayer, clipMove, stomp, PHYS_KINDS,
+    addStatic, removeStatic, setFrozen, addCar, groundAt, ceilingAt, resolvePlayer, clipMove, stomp, PHYS_KINDS,
     setMyId(id) { myId = id; },
   };
 }

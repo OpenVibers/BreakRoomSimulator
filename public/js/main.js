@@ -2170,7 +2170,7 @@ function start(token, user) {
         : hsp > 5.2 ? 'run' : hsp > .5 ? 'walk' : 'idle';
       // gravity — against the walkable surface under our feet (props, ramps,
       // car roofs), not just the world floor
-      const grd = phys.groundAt(my.x, my.z, my.y);
+      const grd = phys.groundAt(my.x, my.z, my.y, !my.onGround);
       const gY = grd.y;
       if (my.onGround && gY > my.y && gY - my.y <= .5) { my.y = gY; my.vy = 0; } // step/ramp up
       my.vy -= 16 * dt;
@@ -2182,6 +2182,15 @@ function start(token, user) {
         }
         my.y = gY; my.vy = 0; my.onGround = true;
       } else if (my.y > gY + .03) my.onGround = false;
+      // ceiling: heads bonk on overhead geometry instead of clipping into it
+      {
+        const ceilY = phys.ceilingAt(my.x, my.z, my.y);
+        const headH = my.crouch ? 1.25 : 1.72;
+        if (ceilY != null && my.y + headH > ceilY) {
+          my.y = Math.max(gY, ceilY - headH);
+          if (my.vy > 0) { my.vy = 0; beep(200, .04, 'square', .05); } // *donk*
+        }
+      }
       // standing on a moving prop/car = moving platform: ride it (source-style)
       if (my.onGround && grd.e && !grd.e.frozen) {
         const bv = grd.e.body.velocity;
