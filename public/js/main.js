@@ -322,7 +322,7 @@ function start(token, user) {
       myAvatar.setHeld(item);
       net.send({ t: 'held', item });
       updateViewmodel();
-      if (item === 'physgun') toast('🧲 Hold left-click to grab · wheel push/pull · hold E + mouse to rotate · right-click freezes · X takes yours back', 5200);
+      if (item === 'physgun') toast('🧲 Hold left-click to grab · wheel push/pull · hold E + mouse to rotate (Shift+E snaps 45°) · right-click freezes · X takes yours back', 5600);
     },
     onWear: (def) => {
       if (def.ap) { me.ap = { ...(me.ap || {}), ...def.ap }; rebuildMyAvatar(); net.send({ t: 'appear', ap: me.ap }); }
@@ -1448,6 +1448,7 @@ function start(token, user) {
   const pgRay = new THREE.Raycaster();
   const pgQTmp = new THREE.Quaternion(), pgQTmp2 = new THREE.Quaternion();
   const PG_X = new THREE.Vector3(1, 0, 0), PG_Y = new THREE.Vector3(0, 1, 0);
+  const pgEuler = new THREE.Euler(), pgWorldQ = new THREE.Quaternion(), pgRight = new THREE.Vector3(), pgAxis = new THREE.Vector3();
   function pgEquipped() { return my.held === 'physgun'; }
   function pgPick() {
     // fan of rays around the crosshair so edge clicks still land
@@ -1914,7 +1915,7 @@ function start(token, user) {
             toast(`${ITEMS[nearest.data.item].icon} ${ITEMS[nearest.data.item].name} → inventory`);
             beep(600, .06, 'sine', .1);
             if (nearest.data.item === 'physgun') // the sandbox manual comes with the tool
-              addChat('🧲 Hold left-click to grab (props & empty cars) · wheel push/pull · hold E + mouse rotates · right-click freezes in place · X takes your prop back · C crafts', 'sys');
+              addChat('🧲 Hold left-click to grab (props & empty cars) · wheel push/pull · hold E + mouse rotates (Shift+E = 45° world snap) · right-click freezes in place · X takes your prop back · C crafts', 'sys');
           }
           return;
         case 'dropitem':
@@ -2017,14 +2018,55 @@ function start(token, user) {
     // physgun rotate mode: hold E while carrying — the mouse turns the OBJECT.
     // Rotations are applied in VIEW space (screen axes), so "mouse right" always
     // spins the prop the same way no matter where you're facing — gmod feel.
+    // SHIFT+E: world-relative snapped rotation — the prop first squares up to
+    // the nearest 45° in world space, then every mouse notch clicks 45° about
+    // a world axis. Perfect for lining up base walls.
     if (pgState.held && input.keys.KeyE && !pgState.held.isCar && pgState.relQ) {
-      const rdx = input.lookDX * .005, rdy = input.lookDY * .005;
+      const rdxPx = input.lookDX, rdyPx = input.lookDY;
       input.lookDX = 0; input.lookDY = 0; // eaten: camera stays put
-      // mirrored on purpose: dragging the mouse "rolls" the prop toward the
-      // drag, like spinning a globe — the un-mirrored version felt backwards
-      if (rdx) pgState.relQ.premultiply(pgQTmp.setFromAxisAngle(PG_Y, rdx));
-      if (rdy) pgState.relQ.premultiply(pgQTmp.setFromAxisAngle(PG_X, rdy));
-    }
+      if (input.keys.ShiftLeft || input.keys.ShiftRight) {
+        const SNAP = Math.PI / 4, TH = 70; // px of drag per 45° notch
+        if (!pgState.snapMode) { // entering snap mode: square up to the world grid
+          pgState.snapMode = true;
+          pgState.snapAX = 0; pgState.snapAY = 0;
+          const bq = pgState.held.body.quaternion;
+          pgEuler.setFromQuaternion(pgQTmp.set(bq.x, bq.y, bq.z, bq.w), 'YXZ');
+          pgEuler.set(Math.round(pgEuler.x / SNAP) * SNAP, Math.round(pgEuler.y / SNAP) * SNAP, Math.round(pgEuler.z / SNAP) * SNAP, 'YXZ');
+          pgWorldQ.setFromEuler(pgEuler);
+          pgState.relQ.copy(camera.quaternion).invert().multiply(pgWorldQ);
+          beep(920, .04, 'sine', .07);
+        }
+        pgState.snapAX += rdxPx;
+        pgState.snapAY += rdyPx;
+        let ticked = false;
+        while (Math.abs(pgState.snapAX) >= TH) { // horizontal: world yaw
+          const dir = Math.sign(pgState.snapAX);
+          pgState.snapAX -= dir * TH;
+          pgWorldQ.premultiply(pgQTmp.setFromAxisAngle(PG_Y, dir * SNAP));
+          ticked = true;
+        }
+        while (Math.abs(pgState.snapAY) >= TH) { // vertical: world axis nearest camera-right
+          const dir = Math.sign(pgState.snapAY);
+          pgState.snapAY -= dir * TH;
+          pgRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
+          if (Math.abs(pgRight.x) >= Math.abs(pgRight.z)) pgAxis.set(Math.sign(pgRight.x) || 1, 0, 0);
+          else pgAxis.set(0, 0, Math.sign(pgRight.z) || 1);
+          pgWorldQ.premultiply(pgQTmp.setFromAxisAngle(pgAxis, dir * SNAP));
+          ticked = true;
+        }
+        if (ticked) {
+          pgState.relQ.copy(camera.quaternion).invert().multiply(pgWorldQ);
+          beep(1040, .03, 'square', .06);
+        }
+      } else {
+        pgState.snapMode = false;
+        const rdx = rdxPx * .005, rdy = rdyPx * .005;
+        // mirrored on purpose: dragging the mouse "rolls" the prop toward the
+        // drag, like spinning a globe — the un-mirrored version felt backwards
+        if (rdx) pgState.relQ.premultiply(pgQTmp.setFromAxisAngle(PG_Y, rdx));
+        if (rdy) pgState.relQ.premultiply(pgQTmp.setFromAxisAngle(PG_X, rdy));
+      }
+    } else if (pgState.snapMode) pgState.snapMode = false;
     // look (sensitivity + optional inverted Y; FP allows full look up/down)
     my.lookVX = input.lookDX;
     my.yaw -= input.lookDX * .0028 * cfg.sens;
