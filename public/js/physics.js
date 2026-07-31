@@ -296,34 +296,63 @@ export function initPhysics(scene) {
   // The player is never displaced by static geometry — their movement is
   // simply clipped, axis-separated, exactly like Source's player controller
   // (which also hand-rolls player movement and leaves physics to the props).
-  function wallAt(x, z, feetY, r) {
+  // Blocking uses an EXACT circle-vs-oriented-box test (Bug52-54: discrete ray
+  // probes could all miss the .22m edge of a wall, letting players phase in).
+  const bdConj = new CANNON.Quaternion();
+  const bdLocal = new CANNON.Vec3();
+  const bdClosest = new CANNON.Vec3();
+  function blockDepth(x, z, feetY, r) {
+    let depth = 0;
     for (const e of props.values()) {
       if (!e.frozen) continue;
       const b = e.body;
+      if (!b.collisionResponse) continue; // fading door — walk on through
       const bb = b.aabb;
       if (x < bb.lowerBound.x - r || x > bb.upperBound.x + r ||
           z < bb.lowerBound.z - r || z > bb.upperBound.z + r) continue;
       if (bb.lowerBound.y > feetY + 1.7) continue;      // frozen shelf overhead
       if (bb.upperBound.y - feetY <= STEP) continue;    // low enough to step on
-      // probe the capsule footprint: center + a ring on the radius. The rays
-      // skip bodies with collisionResponse=false, so fading doors stay passable.
-      for (let i = 0; i < 7; i++) {
-        const a = i * (Math.PI / 3);
-        const sx = i === 6 ? x : x + Math.cos(a) * r * .85;
-        const sz = i === 6 ? z : z + Math.sin(a) * r * .85;
-        const h = surfaceYAt(b, sx, sz);
-        if (h != null && h - feetY > STEP) return true;
+      const shape = b.shapes[0];
+      if (shape?.halfExtents) {
+        // closest point on the oriented box to the player axis, sampled at a
+        // few torso heights — exact in the horizontal plane, so thin edges
+        // block just as hard as broad faces
+        const he = shape.halfExtents;
+        b.quaternion.conjugate(bdConj);
+        for (const hy of [feetY + STEP + .06, feetY + .95, feetY + 1.55]) {
+          bdLocal.set(x - b.position.x, hy - b.position.y, z - b.position.z);
+          bdConj.vmult(bdLocal, bdLocal);
+          bdClosest.set(
+            Math.max(-he.x, Math.min(he.x, bdLocal.x)),
+            Math.max(-he.y, Math.min(he.y, bdLocal.y)),
+            Math.max(-he.z, Math.min(he.z, bdLocal.z)));
+          b.quaternion.vmult(bdClosest, bdClosest);
+          const wy = bdClosest.y + b.position.y - feetY;
+          if (wy <= STEP || wy > 1.7) continue; // touching only a climbable/overhead part
+          const hd = Math.hypot(bdClosest.x + b.position.x - x, bdClosest.z + b.position.z - z);
+          if (r - hd > depth) depth = r - hd;
+        }
+      } else {
+        // cylinders/cones: conservative bounding-radius disc
+        const rad = (shape?.boundingSphereRadius || .4) * .8;
+        const hd = Math.hypot(b.position.x - x, b.position.z - z) - rad;
+        if (r - hd > depth) depth = r - hd;
       }
     }
-    return false;
+    return depth;
   }
   function clipMove(px, pz, nx, nz, feetY, r = .34) {
     if (nx === px && nz === pz) return [nx, nz];
-    if (wallAt(px, pz, feetY, r)) return [nx, nz]; // already inside: let them walk out
+    const d0 = blockDepth(px, pz, feetY, r);
+    if (d0 >= r - 1e-3) return [nx, nz];   // fully embedded (broken state): free escape
+    if (d0 > 0) {                          // overlapping a face: only moves that get you OUT
+      const dn = blockDepth(nx, nz, feetY, r);
+      return dn < d0 - 1e-4 ? [nx, nz] : [px, pz];
+    }
     let x = nx;
-    if (wallAt(x, pz, feetY, r)) x = px;   // clip X
+    if (blockDepth(x, pz, feetY, r) > 0) x = px;   // clip X
     let z = nz;
-    if (wallAt(x, z, feetY, r)) z = pz;    // clip Z (with the clipped X)
+    if (blockDepth(x, z, feetY, r) > 0) z = pz;    // clip Z (with the clipped X)
     return [x, z];
   }
 
