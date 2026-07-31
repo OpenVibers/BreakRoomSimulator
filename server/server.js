@@ -217,6 +217,45 @@ function dayFactorNow() { // must match lighting.js (skewed 8-min cycle)
 function npcSnapshot() {
   return [...npcs.values()].map(n => [n.id, n.kind, +n.x.toFixed(1), +n.z.toFixed(1), +n.ry.toFixed(2), n.hp]);
 }
+// ---- NPC collision vs props & cars (they used to walk straight through) ----
+// Server-side mirror of the client PHYS_KINDS half-extents [hx, hy, hz]
+const PROP_HALF = {
+  wall: [1.5, 1.5, .11], floor: [1.5, .09, 1.5], door: [.8, 1.35, .08],
+  box: [.31, .31, .31], crate: [.5, .5, .5], ball: [.32, .32, .32],
+  barrel: [.36, .475, .36], melon: [.28, .24, .28], cone: [.2, .275, .2], campfire: [.5, .21, .5],
+};
+const yawOfQ = (q) => Math.atan2(2 * (q[3] * q[1] + q[0] * q[2]), 1 - 2 * (q[1] * q[1] + q[0] * q[0]));
+// circle vs yaw-rotated rectangle (upright approximation — good enough for a herd)
+function circleHitsRect(x, z, r, px, pz, yaw, hx, hz) {
+  const dx = x - px, dz = z - pz;
+  const c = Math.cos(-yaw), s = Math.sin(-yaw);
+  const lx = dx * c + dz * s, lz = -dx * s + dz * c;
+  const cx = Math.max(-hx, Math.min(hx, lx)), cz = Math.max(-hz, Math.min(hz, lz));
+  return (lx - cx) ** 2 + (lz - cz) ** 2 < r * r;
+}
+function npcBlocked(x, z, r = .45) {
+  for (const pr of props.values()) {
+    const he = PROP_HALF[pr.kind];
+    if (!he || !Array.isArray(pr.p)) continue;
+    const py = pr.p[1];
+    if (py - he[1] > 1.2 || py + he[1] < .45) continue; // overhead platform / flat on the ground
+    if (Math.abs(pr.p[0] - x) > 3 || Math.abs(pr.p[2] - z) > 3) continue;
+    if (circleHitsRect(x, z, r, pr.p[0], pr.p[2], yawOfQ(pr.q || [0, 0, 0, 1]), he[0], he[2])) return true;
+  }
+  for (const c of Object.values(cars)) {
+    if (!Array.isArray(c.p)) continue;
+    if (Math.abs(c.p[0] - x) > 4 || Math.abs(c.p[2] - z) > 4) continue;
+    if (circleHitsRect(x, z, r, c.p[0], c.p[2], yawOfQ(c.q || [0, 0, 0, 1]), 1.0, 2.15)) return true;
+  }
+  return false;
+}
+// step with axis-separated sliding: bump a wall, slide along it, no vibrating
+function npcStep(n, nx, nz, extraOk = null) {
+  const ok = (x, z) => !npcBlocked(x, z) && (!extraOk || extraOk(x, z));
+  if (ok(nx, nz)) { n.x = nx; n.z = nz; return; }
+  if (ok(nx, n.z)) { n.x = nx; return; }
+  if (ok(n.x, nz)) n.z = nz;
+}
 setInterval(() => { // 5Hz herd-and-horde tick
   const night = dayFactorNow() < .22;
   const zCount = [...npcs.values()].filter(n => n.kind === 'zombie').length;
@@ -224,8 +263,11 @@ setInterval(() => { // 5Hz herd-and-horde tick
     const ps = [...players.values()];
     const t = ps[Math.floor(Math.random() * ps.length)];
     const a = Math.random() * Math.PI * 2, r = 24 + Math.random() * 10;
-    spawnNpc('zombie', clampX(t.x + Math.cos(a) * r), clampZ(t.z + Math.sin(a) * r));
-    if (zCount === 0) sys('🧟 something is shuffling around out there…');
+    const zx = clampX(t.x + Math.cos(a) * r), zz = clampZ(t.z + Math.sin(a) * r);
+    if (!npcBlocked(zx, zz)) { // never spawn one inside somebody's base
+      spawnNpc('zombie', zx, zz);
+      if (zCount === 0) sys('🧟 something is shuffling around out there…');
+    }
   }
   if (!night && zCount) { // sunrise burns them off
     for (const [id, n] of npcs) if (n.kind === 'zombie') { npcs.delete(id); broadcast({ t: 'npc', op: 'del', id, burn: true }); }
@@ -249,7 +291,7 @@ setInterval(() => { // 5Hz herd-and-horde tick
           const nx2 = n.x + Math.sin(n.ry) * sp * step, nz2 = n.z + Math.cos(n.ry) * sp * step;
           // the facility is lit — zombies won't set foot inside
           const INDOORS = [[58, 92, 31, 107], [62, 92, -17, 17], [58, 92, 17, 31], [52.5, 58, 39, 99], [48, 53, 63, 82]];
-          if (!INDOORS.some(([x0, x1, z0, z1]) => nx2 >= x0 && nx2 <= x1 && nz2 >= z0 && nz2 <= z1)) { n.x = nx2; n.z = nz2; }
+          npcStep(n, nx2, nz2, (x, z) => !INDOORS.some(([x0, x1, z0, z1]) => x >= x0 && x <= x1 && z >= z0 && z <= z1));
         }
         else if (Date.now() - n.atkT > 1200) {
           n.atkT = Date.now();
@@ -263,8 +305,9 @@ setInterval(() => { // 5Hz herd-and-horde tick
         if (Math.random() < .08) { n.tx = n.hx + (Math.random() - .5) * 26; n.tz = n.hz + (Math.random() - .5) * 20; }
       } else {
         n.ry = Math.atan2(n.tx - n.x, n.tz - n.z);
-        n.x += Math.sin(n.ry) * sp * step;
-        n.z += Math.cos(n.ry) * sp * step;
+        const wasX = n.x, wasZ = n.z;
+        npcStep(n, n.x + Math.sin(n.ry) * sp * step, n.z + Math.cos(n.ry) * sp * step);
+        if (n.x === wasX && n.z === wasZ) n.tx = null; // penned in: pick a new wander spot
       }
     }
     n.x = clampX(n.x); n.z = clampZ(n.z);
