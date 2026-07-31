@@ -336,7 +336,11 @@ export function initPhysics(scene) {
   const bdConj = new CANNON.Quaternion();
   const bdLocal = new CANNON.Vec3();
   const bdClosest = new CANNON.Vec3();
-  function blockDepth(x, z, feetY, r) {
+  // stepH: how far below a surface top your feet may sit while still passing.
+  // Grounded it's the step height; AIRBORNE it shrinks to ~.1 (Bug58: the .5
+  // mantle window let jumps drift through a thin wall's top edge — now your
+  // feet must genuinely clear an obstacle to cross it, like Source).
+  function blockDepth(x, z, feetY, r, stepH = STEP) {
     let depth = 0;
     for (const e of props.values()) {
       if (!e.frozen) continue;
@@ -346,7 +350,7 @@ export function initPhysics(scene) {
       if (x < bb.lowerBound.x - r || x > bb.upperBound.x + r ||
           z < bb.lowerBound.z - r || z > bb.upperBound.z + r) continue;
       if (bb.lowerBound.y > feetY + 1.7) continue;      // frozen shelf overhead
-      if (bb.upperBound.y - feetY <= STEP) continue;    // low enough to step on
+      if (bb.upperBound.y - feetY <= stepH) continue;   // low enough to step on
       const shape = b.shapes[0];
       if (shape?.halfExtents) {
         // closest point on the oriented box to the player axis, sampled at a
@@ -363,7 +367,7 @@ export function initPhysics(scene) {
             Math.max(-he.z, Math.min(he.z, bdLocal.z)));
           b.quaternion.vmult(bdClosest, bdClosest);
           const wy = bdClosest.y + b.position.y - feetY;
-          if (wy <= STEP || wy > 1.7) continue; // touching only a climbable/overhead part
+          if (wy <= stepH || wy > 1.7) continue; // touching only a climbable/overhead part
           const hd = Math.hypot(bdClosest.x + b.position.x - x, bdClosest.z + b.position.z - z);
           if (r - hd > depth) depth = r - hd;
         }
@@ -376,28 +380,28 @@ export function initPhysics(scene) {
     }
     return depth;
   }
-  function clipMove(px, pz, nx, nz, feetY, r = .34) {
+  function clipMove(px, pz, nx, nz, feetY, r = .34, stepH = STEP) {
     if (nx === px && nz === pz) return [nx, nz];
-    const d0 = blockDepth(px, pz, feetY, r);
+    const d0 = blockDepth(px, pz, feetY, r, stepH);
     if (d0 >= r - 1e-3) return [nx, nz];   // fully embedded (broken state): free escape
     if (d0 > 0) {                          // overlapping a face: only moves that get you OUT
-      const dn = blockDepth(nx, nz, feetY, r);
+      const dn = blockDepth(nx, nz, feetY, r, stepH);
       return dn < d0 - 1e-4 ? [nx, nz] : [px, pz];
     }
     let x = nx;
-    if (blockDepth(x, pz, feetY, r) > 0) x = px;   // clip X
+    if (blockDepth(x, pz, feetY, r, stepH) > 0) x = px;   // clip X
     let z = nz;
-    if (blockDepth(x, z, feetY, r) > 0) z = pz;    // clip Z (with the clipped X)
+    if (blockDepth(x, z, feetY, r, stepH) > 0) z = pz;    // clip Z (with the clipped X)
     return [x, z];
   }
 
   // players are solid: shove the walking capsule out of dynamic props so a
   // physgunned crate PUSHES people instead of clipping through them
-  function resolvePlayer(px, pz, py, r, exclude = null) {
+  function resolvePlayer(px, pz, py, r, exclude = null, stepH = STEP) {
     for (const e of props.values()) {
       if (e === exclude || e.frozen) continue;
       const bb = e.body.aabb;
-      if (bb.upperBound.y - py <= STEP) continue;      // low enough to step on
+      if (bb.upperBound.y - py <= stepH) continue;     // low enough to step on
       if (bb.lowerBound.y > py + 1.6) continue;        // floating overhead
       const nx = Math.max(bb.lowerBound.x, Math.min(px, bb.upperBound.x));
       const nz = Math.max(bb.lowerBound.z, Math.min(pz, bb.upperBound.z));

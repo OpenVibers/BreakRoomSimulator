@@ -2152,9 +2152,12 @@ function start(token, user) {
       my.wishVel = my.wishVel || { x: 0, z: 0 };
       my.wishVel.x = my.vel.x; my.wishVel.z = my.vel.z;
       W.feetY = my.y; // surface-probing colliders judge "climbable" from foot height
+      // airborne = full-height collision (tiny .12 clearance): you must truly
+      // CLEAR an obstacle to cross it — no more slipping through thin tops
+      const stepH = my.onGround ? .5 : .12;
       [nx, nz] = resolveCollisions(nx, nz, .34);
-      [nx, nz] = phys.resolvePlayer(nx, nz, my.y, .34, pgState.held); // props shove people
-      [nx, nz] = phys.clipMove(my.x, my.z, nx, nz, my.y); // frozen props: walk into them, just stop
+      [nx, nz] = phys.resolvePlayer(nx, nz, my.y, .34, pgState.held, stepH); // props shove people
+      [nx, nz] = phys.clipMove(my.x, my.z, nx, nz, my.y, .34, stepH); // frozen props: walk into them, just stop
       if (dt > 0) { my.vel.x = (nx - my.x) / dt; my.vel.z = (nz - my.z) / dt; } // wall clip
       my.x = nx; my.z = nz;
       const hsp = Math.hypot(my.vel.x, my.vel.z);
