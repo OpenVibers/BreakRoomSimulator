@@ -810,23 +810,34 @@ function start(token, user) {
     $('ds-stats').innerHTML = rows.map(([k, v]) => `<div class="ds-row"><span>${k}</span><b>${v}</b></div>`).join('');
     el.classList.remove('hidden');
     requestAnimationFrame(() => el.classList.add('show'));
-    clearTimeout(showDeathScreen._t);
-    showDeathScreen._t = setTimeout(hideDeathScreen, 7000);
-    el.onclick = hideDeathScreen;
+    el.onclick = respawnNow;
   }
   function hideDeathScreen() {
     const el = $('death-screen');
     el.classList.remove('show');
     setTimeout(() => el.classList.add('hidden'), 600);
   }
+  // click-to-respawn: you linger where you fell (screen up, controls dead)
+  // until you click / press E — then you're back at the front walkway
+  function respawnNow() {
+    if (!my.dead) return;
+    my.x = my.dead.x; my.z = my.dead.z;
+    my.y = 0; my.vy = 0;
+    my.vel.x = 0; my.vel.z = 0;
+    my.dead = null;
+    hideDeathScreen();
+    sendPos(true);
+  }
   net.on('died', (m) => {
     setHp(100, false);
     leaveAnyCar(); // dying at the wheel used to respawn you "inside" the car
     if (pgState.held) physgunRelease(false);
+    pgState.lmb = false;
     my.seat = null;
     myAvatar.seatId = null;
-    my.x = m.x; my.z = m.z; my.y = 0; my.vy = 0;
+    my.dead = { x: m.x, z: m.z }; // the walkway spot the server picked for us
     my.vel.x = 0; my.vel.z = 0;
+    my.vy = 0;
     my.held = null;
     myAvatar.setHeld(null);
     net.send({ t: 'held', item: null });
@@ -1492,6 +1503,7 @@ function start(token, user) {
     beep(440, .05, 'square', .04);
   }
   addEventListener('mousedown', (e) => {
+    if (my.dead) { respawnNow(); return; } // any click dismisses the death screen
     if (e.button !== 0 || !input.locked || input.uiOpen || input.chatOpen) return;
     if (pgEquipped()) {
       pgState.lmb = true;
@@ -1886,6 +1898,7 @@ function start(token, user) {
 
   const HELD_BY_KIND = { soda: ['soda', 'a cold soda'], snack: ['chips', 'a bag of chips'], drinks: ['soda', 'a cold drink'], food: ['food', 'a fresh sandwich'], redbull: ['energy', 'an energy drink'] };
   function doAction() {
+    if (my.dead) { respawnNow(); return; }
     if (mg.inArcade()) return;
     if (carState.driving) { exitCar(); return; }
     if (carState.riding) { net.send({ t: 'car', id: carState.riding.car.id, op: 'unsit' }); exitPassengerLocal(carState.riding.car); return; }
@@ -1999,7 +2012,8 @@ function start(token, user) {
     raycaster.setFromCamera(ndc, camera);
     if (mg.worldClick(raycaster)) return;
     // clicking with a melee prop (or bare fists) = attack, first OR third person
-    if (!my.held || ITEMS[my.held]?.type === 'melee') doSwing();
+    // (dead players don't punch — that click is for the respawn screen)
+    if (!my.dead && (!my.held || ITEMS[my.held]?.type === 'melee')) doSwing();
   };
 
   // ---------- movement & camera ----------
@@ -2087,13 +2101,18 @@ function start(token, user) {
     }
     if (input.jumpQueued) {
       input.jumpQueued = false;
-      if (carState.driving || carState.riding) { /* Space is the handbrake while driving */ }
+      if (my.dead) respawnNow();
+      else if (carState.driving || carState.riding) { /* Space is the handbrake while driving */ }
       else if (mg.myPongTable && !my.seat) mg.swing();
       else if (my.onGround && !my.seat) { my.vy = my.crouch ? 4.6 : 6.1; my.onGround = false; my.crouch = false; beep(520, .04, 'sine', .05); } // source-height: a crate is jumpable
       else if (my.seat) standUp();
     }
 
-    if (carState.driving) {
+    if (my.dead) {
+      // waiting on the click-to-respawn screen: rooted where you fell
+      my.anim = 'idle';
+      my.vel.x = 0; my.vel.z = 0;
+    } else if (carState.driving) {
       // ---- rigid-body driving: forces on the chassis, physics handles the rest ----
       const car = carState.driving;
       const e = phys.cars.get(car.id);
